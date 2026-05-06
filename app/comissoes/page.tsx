@@ -35,6 +35,11 @@ type CommissionSettingRow = {
   affiliate_amount: number
   active: boolean
   created_at?: string
+  houses?: {
+    id: string
+    name: string
+    active: boolean
+  }[] | null
 }
 
 type FormState = {
@@ -123,12 +128,23 @@ export default function ComissoesPage() {
     const housesResponse = await supabase
       .from('houses')
       .select('id, name')
+      .eq('active', true)
       .order('name')
 
     const settingsResponse = await supabase
       .from('affiliate_commission_settings')
-      .select('id, manager_user_id, affiliate_user_id, house_id, affiliate_amount, active, created_at')
+      .select(`
+        id,
+        manager_user_id,
+        affiliate_user_id,
+        house_id,
+        affiliate_amount,
+        active,
+        created_at,
+        houses!inner(id, name, active)
+      `)
       .eq('active', true)
+      .eq('houses.active', true)
       .order('created_at', { ascending: false })
 
     if (usersResponse.error) {
@@ -147,8 +163,26 @@ export default function ComissoesPage() {
     }
 
     const allUsers = (usersResponse.data || []) as UserRow[]
-    const allHouses = (housesResponse.data || []) as HouseRow[]
-    const activeSettings = (settingsResponse.data || []) as CommissionSettingRow[]
+    const allHousesRaw = (housesResponse.data || []) as HouseRow[]
+
+    const allHouses = Array.from(
+      new Map(
+        allHousesRaw.map((house) => [house.name.toLowerCase(), house])
+      ).values()
+    )
+
+    const rawSettings = (settingsResponse.data || []) as CommissionSettingRow[]
+
+    const activeSettings = Array.from(
+      new Map(
+        rawSettings.map((setting) => {
+          const affiliateId = setting.affiliate_user_id
+          const houseName = setting.houses?.[0]?.name || setting.house_id
+
+          return [`${affiliateId}-${houseName}`, setting]
+        })
+      ).values()
+    )
 
     setUsers(allUsers)
     setHouses(allHouses)
@@ -316,7 +350,7 @@ export default function ComissoesPage() {
         : true
 
       const matchesHouse = selectedHouse
-        ? item.house_id === selectedHouse
+        ? getHouseName(item.house_id) === getHouseName(selectedHouse)
         : true
 
       return matchesAffiliate && matchesHouse
@@ -340,7 +374,7 @@ export default function ComissoesPage() {
           return !settings.some(
             (setting) =>
               setting.affiliate_user_id === affiliate.id &&
-              setting.house_id === house.id
+              getHouseName(setting.house_id) === house.name
           )
         })
         .map((house) => ({

@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import LayoutShell from './components/LayoutShell'
 
@@ -11,7 +12,8 @@ type LoggedUser = {
   db?: {
     id: string
     nome: string
-    role: UserRole
+    role: UserRole | null
+    status?: 'pending' | 'active' | 'inactive'
   }
 }
 
@@ -53,17 +55,17 @@ type UserRow = {
 type HouseRow = {
   id: string
   name: string
+  active?: boolean
 }
 
 export default function Home() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const router = useRouter()
   const [user, setUser] = useState<LoggedUser | null>(null)
-  const [message, setMessage] = useState('')
   const [splits, setSplits] = useState<CommissionSplit[]>([])
   const [conversions, setConversions] = useState<ConversionRow[]>([])
   const [allUsers, setAllUsers] = useState<UserRow[]>([])
   const [houses, setHouses] = useState<HouseRow[]>([])
+  const [houseOptions, setHouseOptions] = useState<HouseRow[]>([])
   const [loading, setLoading] = useState(true)
 
   const [startDate, setStartDate] = useState('')
@@ -87,15 +89,31 @@ export default function Home() {
           .from('commission_splits')
           .select('*')
           .order('created_at', { ascending: false }),
-        supabase.from('houses').select('id, name').order('name'),
+        supabase
+          .from('houses')
+          .select('id, name, active')
+          .order('name'),
         supabase.from('conversions').select('*').order('data', { ascending: false }),
         supabase.from('users').select('id, nome, email, role, parent_id'),
       ])
 
     if (housesResponse.data) {
-      setHouses(housesResponse.data as HouseRow[])
+      const allHouses = housesResponse.data as HouseRow[]
+
+      setHouses(allHouses)
+
+      const activeUniqueHouses = Array.from(
+        new Map(
+          allHouses
+            .filter((house) => house.active)
+            .map((house) => [house.name, house])
+        ).values()
+      )
+
+      setHouseOptions(activeUniqueHouses)
     } else {
       setHouses([])
+      setHouseOptions([])
     }
 
     if (usersResponse.data) {
@@ -123,15 +141,38 @@ export default function Home() {
     const { data: authData } = await supabase.auth.getUser()
 
     if (!authData.user) {
-      setLoading(false)
+      router.push('/login')
       return
     }
 
-    const { data } = await supabase
+    let { data } = await supabase
       .from('users')
       .select('*')
       .eq('auth_id', authData.user.id)
-      .single()
+      .maybeSingle()
+
+    if (!data) {
+      const { data: createdUser, error: insertError } = await supabase
+        .from('users')
+        .insert({
+          auth_id: authData.user.id,
+          email: authData.user.email,
+          nome: authData.user.email,
+          role: null,
+          parent_id: null,
+          afiliado_nome: null,
+          status: 'pending',
+        })
+        .select('*')
+        .single()
+
+      if (insertError) {
+        console.error(insertError)
+        throw new Error('Erro ao criar usuário')
+      }
+
+      data = createdUser
+    }
 
     const loggedUser: LoggedUser = {
       email: authData.user.email,
@@ -140,35 +181,23 @@ export default function Home() {
             id: data.id,
             nome: data.nome,
             role: data.role,
+            status: data.status,
           }
         : undefined,
     }
 
     setUser(loggedUser)
 
-    if (data) {
-      await loadDashboardData(data)
-    }
-
-    setLoading(false)
-  }
-
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault()
-    setMessage('Entrando...')
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-
-    if (error) {
-      setMessage(`Erro: ${error.message}`)
+    if (!data) {
+      router.push('/login')
       return
     }
 
-    setMessage('Login realizado com sucesso!')
-    await checkUser()
+   if (data.status === 'active') {
+    await loadDashboardData(data)
+  }
+
+    setLoading(false)
   }
 
   const isAdminMaster = user?.db?.role === 'admin_master'
@@ -264,7 +293,14 @@ export default function Home() {
   const filteredConversions = useMemo(() => {
     return conversions.filter((item) => {
       const matchesVisibility = canSeeConversion(item)
-      const matchesHouse = selectedHouse ? item.house_id === selectedHouse : true
+      const conversionHouseName = getHouseName(item.house_id)
+      const selectedHouseName = selectedHouse
+        ? houseOptions.find((house) => house.id === selectedHouse)?.name
+        : ''
+
+      const matchesHouse = selectedHouseName
+        ? conversionHouseName === selectedHouseName
+        : true
       const matchesPerson = selectedPerson
         ? item.lead_owner_user_id === selectedPerson
         : true
@@ -297,6 +333,8 @@ export default function Home() {
     endDate,
     visibleUserIds,
     isAdminMaster,
+    houseOptions,
+    houses,
   ])
 
   const tableRows = useMemo(() => {
@@ -404,6 +442,68 @@ export default function Home() {
     )
   }
 
+  if (user?.db?.status === 'pending') {
+    return (
+      <main style={loginPageBg}>
+        <div style={loginCard}>
+          <div style={loginLogoBox}>GA</div>
+
+          <h1
+            style={{
+              margin: 0,
+              fontSize: '30px',
+              fontWeight: 800,
+              letterSpacing: '-0.04em',
+              color: '#bbf7d0',
+            }}
+          >
+            Cadastro recebido
+          </h1>
+
+          <p
+            style={{
+              marginTop: '12px',
+              color: '#94a3b8',
+              fontSize: '15px',
+              lineHeight: 1.5,
+            }}
+          >
+            Aguarde liberação pelo administrador.
+          </p>
+        </div>
+      </main>
+    )
+  }
+
+  if (user?.db?.status === 'inactive') {
+    return (
+      <main style={loginPageBg}>
+        <div style={loginCard}>
+          <div style={loginLogoBox}>GA</div>
+
+          <h1 style={{
+            margin: 0,
+            fontSize: '30px',
+            fontWeight: 800,
+            letterSpacing: '-0.04em',
+            color: '#fca5a5',
+          }}>
+            Conta inativa
+          </h1>
+
+          <p style={{
+            marginTop: '12px',
+            color: '#94a3b8',
+            fontSize: '15px',
+            lineHeight: 1.5,
+          }}>
+            Sua conta está desativada. Entre em contato com o administrador.
+          </p>
+        </div>
+      </main>
+    )
+  }
+
   if (user?.db) {
     return (
       <LayoutShell
@@ -411,7 +511,7 @@ export default function Home() {
         user={{
           nome: user.db.nome,
           email: user.email || '',
-          role: user.db.role,
+          role: user.db.role || '',
         }}
       >
         <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
@@ -459,7 +559,7 @@ export default function Home() {
                   style={inputStyle}
                 >
                   <option value="">Todas</option>
-                  {houses.map((house) => (
+                  {houseOptions.map((house) => (
                     <option key={house.id} value={house.id}>
                       {house.name}
                     </option>
@@ -696,91 +796,7 @@ export default function Home() {
     )
   }
 
-  return (
-    <main style={loginPageBg}>
-      <div style={loginCard}>
-        <div style={{ marginBottom: '24px' }}>
-          <div style={loginLogoBox}>GA</div>
-
-          <h1
-            style={{
-              margin: 0,
-              fontSize: '30px',
-              fontWeight: 800,
-              letterSpacing: '-0.04em',
-            }}
-          >
-            Entrar
-          </h1>
-
-          <p
-            style={{
-              marginTop: '10px',
-              color: '#94a3b8',
-              fontSize: '14px',
-            }}
-          >
-            Acesse o painel de gestão de afiliados
-          </p>
-        </div>
-
-        <form
-          onSubmit={handleLogin}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '14px',
-          }}
-        >
-          <input
-            type="email"
-            placeholder="E-mail"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={inputStyle}
-          />
-
-          <input
-            type="password"
-            placeholder="Senha"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={inputStyle}
-          />
-
-          <button
-            type="submit"
-            style={{
-              marginTop: '8px',
-              border: '1px solid rgba(34,197,94,0.25)',
-              background: 'linear-gradient(180deg, #16a34a, #15803d)',
-              color: '#f0fdf4',
-              padding: '13px 16px',
-              borderRadius: '14px',
-              cursor: 'pointer',
-              fontWeight: 700,
-              fontSize: '15px',
-              boxShadow: '0 0 24px rgba(34,197,94,0.18)',
-            }}
-          >
-            Entrar
-          </button>
-        </form>
-
-        {message && (
-          <p
-            style={{
-              marginTop: '18px',
-              color: '#bbf7d0',
-              fontSize: '14px',
-            }}
-          >
-            {message}
-          </p>
-        )}
-      </div>
-    </main>
-  )
+  return null
 }
 
 function KpiCard({ title, value }: { title: string; value: string }) {

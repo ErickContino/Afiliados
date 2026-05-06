@@ -5,15 +5,17 @@ import { supabase } from '@/lib/supabase'
 import LayoutShell from '../components/LayoutShell'
 
 type UserRole = 'admin_master' | 'admin_partner' | 'gerente' | 'afiliado'
+type UserStatus = 'pending' | 'active' | 'inactive'
 
 type UserRow = {
   id: string
-  nome: string
-  email: string
-  role: UserRole
+  nome: string | null
+  email: string | null
+  role: UserRole | null
   parent_id?: string | null
   afiliado_nome?: string | null
   auth_id?: string | null
+  status: UserStatus
 }
 
 type LoggedUser = {
@@ -21,10 +23,31 @@ type LoggedUser = {
   db?: UserRow
 }
 
-type FormState = {
+type HouseRow = {
+  id: string
+  name: string
+}
+
+type UserHouseLink = {
+  id: string
+  user_id: string
+  house_id: string
+  tracking_link: string
+  active: boolean
+}
+
+type ManualCreateForm = {
   nome: string
   email: string
   senha: string
+  role: UserRole
+  parent_id: string
+  afiliado_nome: string
+}
+
+type CompleteForm = {
+  user_id: string
+  nome: string
   role: UserRole
   parent_id: string
   afiliado_nome: string
@@ -38,7 +61,7 @@ type UnregisteredAffiliate = {
   casas: string
 }
 
-const emptyForm: FormState = {
+const emptyManualForm: ManualCreateForm = {
   nome: '',
   email: '',
   senha: '',
@@ -47,8 +70,20 @@ const emptyForm: FormState = {
   afiliado_nome: '',
 }
 
+const emptyCompleteForm: CompleteForm = {
+  user_id: '',
+  nome: '',
+  role: 'afiliado',
+  parent_id: '',
+  afiliado_nome: '',
+}
+
 export default function UsuariosPage() {
   const [users, setUsers] = useState<UserRow[]>([])
+  const [houses, setHouses] = useState<HouseRow[]>([])
+  const [links, setLinks] = useState<UserHouseLink[]>([])
+  const [linkForm, setLinkForm] = useState<Record<string, string>>({})
+
   const [unregisteredAffiliates, setUnregisteredAffiliates] = useState<UnregisteredAffiliate[]>([])
   const [currentUser, setCurrentUser] = useState<LoggedUser | null>(null)
 
@@ -58,9 +93,12 @@ export default function UsuariosPage() {
 
   const [selectedRole, setSelectedRole] = useState('')
   const [selectedManager, setSelectedManager] = useState('')
-  const [selectedAuthStatus, setSelectedAuthStatus] = useState('')
+  const [selectedLinkStatus, setSelectedLinkStatus] = useState('')
 
-  const [form, setForm] = useState<FormState>(emptyForm)
+  const [manualForm, setManualForm] = useState<ManualCreateForm>(emptyManualForm)
+  const [completeForm, setCompleteForm] = useState<CompleteForm>(emptyCompleteForm)
+  const [assigningAffiliate, setAssigningAffiliate] = useState<UnregisteredAffiliate | null>(null)
+  const [selectedAssignUserId, setSelectedAssignUserId] = useState('')
 
   useEffect(() => {
     init()
@@ -79,7 +117,7 @@ export default function UsuariosPage() {
 
     const { data: userDb, error } = await supabase
       .from('users')
-      .select('*')
+      .select('id, nome, email, role, parent_id, afiliado_nome, status')
       .eq('auth_id', authData.user.id)
       .single()
 
@@ -96,8 +134,12 @@ export default function UsuariosPage() {
       db: loggedUser,
     })
 
-    await loadUsers()
-    await loadUnregisteredAffiliates(loggedUser)
+    await Promise.all([
+      loadUsers(),
+      loadHouses(),
+      loadLinks(),
+      loadUnregisteredAffiliates(loggedUser),
+    ])
 
     setLoading(false)
   }
@@ -105,15 +147,58 @@ export default function UsuariosPage() {
   async function loadUsers() {
     const { data, error } = await supabase
       .from('users')
-      .select('*')
-      .order('nome')
+      .select('id, nome, email, role, parent_id, afiliado_nome, status')
+      .order('email')
 
     if (error || !data) {
-      setMessage('Erro ao carregar usuários.')
+      setMessage(`Erro ao carregar usuários: ${error?.message || 'erro desconhecido'}`)
       return
     }
 
     setUsers(data as UserRow[])
+  }
+
+  async function loadHouses() {
+    const { data, error } = await supabase
+      .from('houses')
+      .select('id, name')
+      .eq('active', true)
+      .order('name')
+
+    if (error || !data) {
+      setHouses([])
+      return
+    }
+
+    setHouses(data as HouseRow[])
+  }
+
+  async function loadLinks() {
+    const { data, error } = await supabase
+      .from('user_house_links')
+      .select('id, user_id, house_id, tracking_link, active')
+      .eq('active', true)
+
+    if (error || !data) {
+      setLinks([])
+      return
+    }
+
+    setLinks(data as UserHouseLink[])
+  }
+
+  async function loadLinksForUser(userId: string) {
+    const { data, error } = await supabase
+      .from('user_house_links')
+      .select('id, user_id, house_id, tracking_link, active')
+      .eq('user_id', userId)
+      .eq('active', true)
+
+    if (error || !data) {
+      return []
+    }
+
+    return data as UserHouseLink[]
   }
 
   async function loadUnregisteredAffiliates(user: UserRow) {
@@ -129,14 +214,25 @@ export default function UsuariosPage() {
 
     if (error || !data) {
       setUnregisteredAffiliates([])
-      setMessage(`Erro ao carregar afiliados não cadastrados: ${error?.message}`)
+      setMessage(`Erro ao carregar afiliados não cadastrados: ${error?.message || 'erro desconhecido'}`)
       return
     }
 
     setUnregisteredAffiliates(data as UnregisteredAffiliate[])
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  async function reloadAll() {
+    if (!currentUser?.db) return
+
+    await Promise.all([
+      loadUsers(),
+      loadHouses(),
+      loadLinks(),
+      loadUnregisteredAffiliates(currentUser.db),
+    ])
+  }
+
+  async function handleManualCreate(e: React.FormEvent) {
     e.preventDefault()
     setMessage('')
 
@@ -147,14 +243,19 @@ export default function UsuariosPage() {
       return
     }
 
-    if (!form.nome || !form.email || !form.senha) {
+    if (!manualForm.nome.trim() || !manualForm.email.trim() || !manualForm.senha.trim()) {
       setMessage('Preencha nome, email e senha.')
       return
     }
 
-    const parentId = form.parent_id || null
+    if (!manualForm.afiliado_nome.trim()) {
+      setMessage('Defina o nome de match no CSV.')
+      return
+    }
 
-    if (form.role === 'afiliado' && !parentId) {
+    const parentId = manualForm.role === 'afiliado' ? manualForm.parent_id || null : null
+
+    if (manualForm.role === 'afiliado' && !parentId) {
       setMessage('Selecione um gerente responsável para o afiliado.')
       return
     }
@@ -178,12 +279,12 @@ export default function UsuariosPage() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          nome: form.nome,
-          email: form.email,
-          senha: form.senha,
-          role: form.role,
+          nome: manualForm.nome.trim(),
+          email: manualForm.email.trim(),
+          senha: manualForm.senha,
+          role: manualForm.role,
           parent_id: parentId,
-          afiliado_nome: form.afiliado_nome || form.nome,
+          afiliado_nome: manualForm.afiliado_nome.trim(),
         }),
       })
 
@@ -197,54 +298,241 @@ export default function UsuariosPage() {
       }
 
       setMessage('Usuário criado com sucesso.')
-      setForm(emptyForm)
-
-      await loadUsers()
-
-      if (currentUser.db) {
-        await loadUnregisteredAffiliates(currentUser.db)
-      }
+      setManualForm(emptyManualForm)
+      await reloadAll()
     } catch {
       setSaving(false)
       setMessage('Erro inesperado ao criar usuário.')
     }
   }
 
-  function fillFormFromUnregistered(affiliate: UnregisteredAffiliate) {
-    setForm((prev) => ({
-      ...prev,
-      nome: affiliate.afiliado,
-      afiliado_nome: affiliate.afiliado,
-      role: 'afiliado',
-      parent_id: '',
-    }))
+  async function handleCompleteUser(e: React.FormEvent) {
+    e.preventDefault()
+    setMessage('')
 
-    setMessage(`Formulário preenchido com ${affiliate.afiliado}. Informe email, senha e gerente.`)
+    if (!currentUser?.db) return
+
+    if (currentUser.db.role !== 'admin_master') {
+      setMessage('Apenas admin_master pode completar cadastro.')
+      return
+    }
+
+    if (!completeForm.user_id) {
+      setMessage('Selecione um usuário para completar ou editar.')
+      return
+    }
+
+    if (!completeForm.nome.trim() || !completeForm.role) {
+      setMessage('Preencha nome e role.')
+      return
+    }
+
+    const parentId = completeForm.role === 'afiliado' ? completeForm.parent_id || null : null
+
+    if (completeForm.role === 'afiliado' && !parentId) {
+      setMessage('Selecione um gerente responsável para o afiliado.')
+      return
+    }
+
+    const linksPayload = Object.entries(linkForm)
+      .filter(([, value]) => value.trim())
+      .map(([house_id, tracking_link]) => ({
+        house_id,
+        tracking_link: tracking_link.trim(),
+      }))
+
+    setSaving(true)
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        setSaving(false)
+        setMessage('Sessão inválida. Faça login novamente.')
+        return
+      }
+
+      const res = await fetch('/api/users/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          user_id: completeForm.user_id,
+          nome: completeForm.nome.trim(),
+          role: completeForm.role,
+          parent_id: parentId,
+          afiliado_nome: completeForm.afiliado_nome.trim() || null,
+          links: linksPayload,
+        }),
+      })
+
+      const data = await res.json()
+
+      setSaving(false)
+
+      if (!res.ok) {
+        setMessage(`Erro ao salvar cadastro: ${data.error || 'Erro desconhecido.'}`)
+        return
+      }
+
+      setMessage('Cadastro salvo com sucesso.')
+      setCompleteForm(emptyCompleteForm)
+      setLinkForm({})
+      await reloadAll()
+    } catch {
+      setSaving(false)
+      setMessage('Erro inesperado ao salvar cadastro.')
+    }
+  }
+
+  async function handleAssignAffiliate(e: React.FormEvent) {
+    e.preventDefault()
+    setMessage('')
+
+    if (!currentUser?.db) return
+
+    if (currentUser.db.role !== 'admin_master') {
+      setMessage('Apenas admin_master pode atribuir afiliados.')
+      return
+    }
+
+    if (!assigningAffiliate) {
+      setMessage('Selecione um afiliado do CSV.')
+      return
+    }
+
+    if (!selectedAssignUserId) {
+      setMessage('Selecione um usuário para atribuir.')
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        setSaving(false)
+        setMessage('Sessão inválida. Faça login novamente.')
+        return
+      }
+
+      const res = await fetch('/api/users/assign-affiliate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          user_id: selectedAssignUserId,
+          afiliado_nome: assigningAffiliate.afiliado,
+        }),
+      })
+
+      const data = await res.json()
+
+      setSaving(false)
+
+      if (!res.ok) {
+        setMessage(
+          data.error === 'Afiliado já vinculado a outro usuário'
+            ? 'Este afiliado já está vinculado a outro usuário.'
+            : `Erro ao atribuir afiliado: ${data.error || 'Erro desconhecido.'}`
+        )
+        return
+      }
+
+      setMessage('Afiliado vinculado com sucesso.')
+      setAssigningAffiliate(null)
+      setSelectedAssignUserId('')
+      await reloadAll()
+    } catch {
+      setSaving(false)
+      setMessage('Erro inesperado ao atribuir afiliado.')
+    }
+  }
+
+  async function startCompleteUser(user: UserRow) {
+    setCompleteForm({
+      user_id: user.id,
+      nome: user.nome || user.email?.split('@')[0] || '',
+      role: user.role || 'afiliado',
+      parent_id: user.parent_id || '',
+      afiliado_nome: user.afiliado_nome || '',
+    })
+
+    const userLinks = await loadLinksForUser(user.id)
+
+    const nextLinks: Record<string, string> = {}
+
+    for (const house of houses) {
+      const existingLink = userLinks.find((link) => link.house_id === house.id)
+      nextLinks[house.id] = existingLink?.tracking_link || ''
+    }
+
+    setLinkForm(nextLinks)
+    setMessage(`Editando cadastro de ${user.nome || user.email}.`)
+  }
+
+  function resetCompleteForm() {
+    setCompleteForm(emptyCompleteForm)
+    setLinkForm({})
+    setMessage('')
   }
 
   const isAdminMaster = currentUser?.db?.role === 'admin_master'
   const canViewPage = isAdminMaster
   const canCreateUser = isAdminMaster
 
-  const managerOptions = useMemo(() => {
-    return users.filter((u) => u.role === 'gerente')
+  const pendingUsers = useMemo(() => {
+    return users.filter((u) => u.status === 'pending')
   }, [users])
 
-  const filteredUsers = useMemo(() => {
-    return users.filter((u) => {
+  const activeUsers = useMemo(() => {
+    return users.filter((u) => u.status === 'active')
+  }, [users])
+
+  const inactiveUsers = useMemo(() => {
+    return users.filter((u) => u.status === 'inactive')
+  }, [users])
+
+  const managerOptions = useMemo(() => {
+    return users.filter((u) => u.role === 'gerente' && u.status === 'active')
+  }, [users])
+
+  const assignUserOptions = useMemo(() => {
+    return [...pendingUsers, ...activeUsers]
+      .sort((a, b) => {
+        const aHasAffiliate = Boolean(a.afiliado_nome)
+        const bHasAffiliate = Boolean(b.afiliado_nome)
+
+        if (aHasAffiliate !== bHasAffiliate) {
+          return aHasAffiliate ? 1 : -1
+        }
+
+        return (a.nome || a.email || '').localeCompare(b.nome || b.email || '')
+      })
+  }, [pendingUsers, activeUsers])
+
+  const filteredActiveUsers = useMemo(() => {
+    return activeUsers.filter((u) => {
       const matchesRole = selectedRole ? u.role === selectedRole : true
       const matchesManager = selectedManager ? u.parent_id === selectedManager : true
 
-      const matchesAuth =
-        selectedAuthStatus === 'vinculado'
-          ? !!u.auth_id
-          : selectedAuthStatus === 'sem_login'
-            ? !u.auth_id
+      const matchesLinks =
+        selectedLinkStatus === 'com_link'
+          ? getMissingLinksCount(u.id) === 0
+          : selectedLinkStatus === 'sem_link'
+            ? getMissingLinksCount(u.id) > 0
             : true
 
-      return matchesRole && matchesManager && matchesAuth
+      return matchesRole && matchesManager && matchesLinks
     })
-  }, [users, selectedRole, selectedManager, selectedAuthStatus])
+  }, [activeUsers, selectedRole, selectedManager, selectedLinkStatus, links, houses])
 
   function getParentName(parentId?: string | null) {
     if (!parentId) return '-'
@@ -254,6 +542,40 @@ export default function UsuariosPage() {
   function formatDate(date?: string | null) {
     if (!date) return '-'
     return new Date(`${date}T00:00:00`).toLocaleDateString('pt-BR')
+  }
+
+  function getMissingLinksCount(userId: string) {
+    return houses.filter((house) => {
+      return !links.some(
+        (link) =>
+          link.user_id === userId &&
+          link.house_id === house.id &&
+          link.active &&
+          link.tracking_link
+      )
+    }).length
+  }
+  
+  function formatRole(role: UserRole | null) {
+    if (!role) return '-'
+
+    const map = {
+      admin_master: 'Admin Master',
+      admin_partner: 'Admin Partner',
+      gerente: 'Gerente',
+      afiliado: 'Afiliado',
+    }
+
+    return map[role] || role
+  }
+
+  function getLinkSummary(userId: string) {
+    const missing = getMissingLinksCount(userId)
+
+    if (houses.length === 0) return 'Sem casas ativas'
+    if (missing === 0) return '✔ Completo'
+
+    return `⚠️ ${missing} casa(s) sem link`
   }
 
   if (loading) {
@@ -277,19 +599,34 @@ export default function UsuariosPage() {
     )
   }
 
+  if (currentUser.db.status === 'pending') {
+    return (
+      <main style={pageBg}>
+        <div style={centerBox}>
+          <section style={blockedCard}>
+            <h1 style={blockedTitle}>Cadastro recebido</h1>
+            <p style={blockedText}>
+              Seu cadastro está aguardando liberação pelo administrador.
+            </p>
+          </section>
+        </div>
+      </main>
+    )
+  }
+
   if (!canViewPage) {
     return (
       <LayoutShell
         active="usuarios"
         user={{
-          nome: currentUser.db.nome,
+          nome: currentUser.db.nome || '',
           email: currentUser.email || '',
-          role: currentUser.db.role,
+          role: currentUser.db.role || '',
         }}
       >
         <section style={blockedCard}>
           <h1 style={blockedTitle}>Acesso restrito</h1>
-          <p style={blockedText}>Esta tela está disponível apenas para admin.</p>
+          <p style={blockedText}>Esta tela está disponível apenas para admin master.</p>
         </section>
       </LayoutShell>
     )
@@ -299,18 +636,18 @@ export default function UsuariosPage() {
     <LayoutShell
       active="usuarios"
       user={{
-        nome: currentUser.db.nome,
+        nome: currentUser.db.nome || '',
         email: currentUser.email || '',
-        role: currentUser.db.role,
+        role: currentUser.db.role || '',
       }}
     >
-      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+      <div style={{ maxWidth: '1500px', margin: '0 auto' }}>
         <header style={headerCard}>
           <div>
             <p style={eyebrow}>Operação</p>
             <h1 style={pageTitle}>Usuários</h1>
             <p style={pageSubtitle}>
-              Gerencie perfis, logins e vínculos hierárquicos do sistema.
+              Gerencie cadastros pendentes, usuários ativos, hierarquia e links por casa.
             </p>
           </div>
         </header>
@@ -320,8 +657,118 @@ export default function UsuariosPage() {
             <section style={panelCard}>
               <div style={panelHeader}>
                 <div>
+                  <h2 style={panelTitle}>Cadastros pendentes</h2>
+                  <p style={panelSubtitle}>
+                    {pendingUsers.length} usuário(s) aguardando liberação.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr style={theadRow}>
+                      <Th>Nome</Th>
+                      <Th>Email</Th>
+                      <Th>Status</Th>
+                      <Th>Ação</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} style={emptyStateTd}>
+                          Nenhum cadastro pendente.
+                        </td>
+                      </tr>
+                    ) : (
+                      pendingUsers.map((u) => (
+                        <tr key={u.id} style={tbodyRow}>
+                          <Td>{u.nome || '-'}</Td>
+                          <Td>{u.email || '-'}</Td>
+                          <Td>pending</Td>
+                          <Td>
+                            <button
+                              type="button"
+                              style={secondaryButton}
+                              onClick={() => startCompleteUser(u)}
+                            >
+                              Completar cadastro
+                            </button>
+                          </Td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section style={panelCard}>
+              <div style={panelHeader}>
+                <div>
+                  <h2 style={panelTitle}>Afiliados detectados no CSV sem usuário</h2>
+                  <p style={panelSubtitle}>
+                    Nomes encontrados em conversions.afiliado sem match em users.afiliado_nome.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr style={theadRow}>
+                      <Th>Nome no CSV</Th>
+                      <Th>Status</Th>
+                      <Th>Conversões</Th>
+                      <Th>Primeira</Th>
+                      <Th>Última</Th>
+                      <Th>Casas</Th>
+                      <Th>Ação</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unregisteredAffiliates.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={emptyStateTd}>
+                          Nenhum afiliado sem usuário encontrado.
+                        </td>
+                      </tr>
+                    ) : (
+                      unregisteredAffiliates.map((affiliate) => (
+                        <tr key={affiliate.afiliado} style={tbodyRow}>
+                          <Td>{affiliate.afiliado}</Td>
+                          <Td>❌ Não vinculado</Td>
+                          <Td>{affiliate.qtd_conversoes}</Td>
+                          <Td>{formatDate(affiliate.primeira_conversao)}</Td>
+                          <Td>{formatDate(affiliate.ultima_conversao)}</Td>
+                          <Td>{affiliate.casas || '-'}</Td>
+                          <Td>
+                            <button
+                              type="button"
+                              style={secondaryButton}
+                              onClick={() => {
+                                setAssigningAffiliate(affiliate)
+                                setSelectedAssignUserId('')
+                                setMessage(`Atribuindo ${affiliate.afiliado} a um usuário existente.`)
+                              }}
+                            >
+                              Atribuir usuário
+                            </button>
+                          </Td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section style={panelCard}>
+              <div style={panelHeader}>
+                <div>
                   <h2 style={panelTitle}>Filtros</h2>
-                  <p style={panelSubtitle}>Refine a listagem de usuários.</p>
+                  <p style={panelSubtitle}>Refine a listagem de usuários ativos.</p>
                 </div>
               </div>
 
@@ -355,15 +802,15 @@ export default function UsuariosPage() {
                   </select>
                 </Field>
 
-                <Field label="Login">
+                <Field label="Links">
                   <select
-                    value={selectedAuthStatus}
-                    onChange={(e) => setSelectedAuthStatus(e.target.value)}
+                    value={selectedLinkStatus}
+                    onChange={(e) => setSelectedLinkStatus(e.target.value)}
                     style={inputStyle}
                   >
                     <option value="">Todos</option>
-                    <option value="vinculado">Com login</option>
-                    <option value="sem_login">Sem login</option>
+                    <option value="com_link">Links completos</option>
+                    <option value="sem_link">Com link faltando</option>
                   </select>
                 </Field>
               </div>
@@ -372,8 +819,10 @@ export default function UsuariosPage() {
             <section style={panelCard}>
               <div style={panelHeader}>
                 <div>
-                  <h2 style={panelTitle}>Usuários cadastrados</h2>
-                  <p style={panelSubtitle}>{filteredUsers.length} registro(s) encontrado(s)</p>
+                  <h2 style={panelTitle}>Usuários ativos</h2>
+                  <p style={panelSubtitle}>
+                    {filteredActiveUsers.length} registro(s) encontrado(s)
+                  </p>
                 </div>
               </div>
 
@@ -386,25 +835,35 @@ export default function UsuariosPage() {
                       <Th>Email</Th>
                       <Th>Role</Th>
                       <Th>Gerente</Th>
-                      <Th>Auth</Th>
+                      <Th>Links</Th>
+                      <Th>Ação</Th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredUsers.length === 0 ? (
+                    {filteredActiveUsers.length === 0 ? (
                       <tr>
-                        <td colSpan={6} style={emptyStateTd}>
-                          Nenhum usuário encontrado.
+                        <td colSpan={7} style={emptyStateTd}>
+                          Nenhum usuário ativo encontrado.
                         </td>
                       </tr>
                     ) : (
-                      filteredUsers.map((u) => (
+                      filteredActiveUsers.map((u) => (
                         <tr key={u.id} style={tbodyRow}>
-                          <Td>{u.nome}</Td>
+                          <Td>{u.nome || '-'}</Td>
                           <Td>{u.afiliado_nome || '-'}</Td>
-                          <Td>{u.email}</Td>
-                          <Td>{u.role}</Td>
+                          <Td>{u.email || '-'}</Td>
+                          <Td>{formatRole(u.role)}</Td>
                           <Td>{getParentName(u.parent_id)}</Td>
-                          <Td>{u.auth_id ? 'Vinculado' : 'Sem login'}</Td>
+                          <Td>{getLinkSummary(u.id)}</Td>
+                          <Td>
+                            <button
+                              type="button"
+                              style={secondaryButton}
+                              onClick={() => startCompleteUser(u)}
+                            >
+                              Editar cadastro
+                            </button>
+                          </Td>
                         </tr>
                       ))
                     )}
@@ -413,14 +872,12 @@ export default function UsuariosPage() {
               </div>
             </section>
 
-            {isAdminMaster && (
+            {inactiveUsers.length > 0 && (
               <section style={panelCard}>
                 <div style={panelHeader}>
                   <div>
-                    <h2 style={panelTitle}>Afiliados não cadastrados</h2>
-                    <p style={panelSubtitle}>
-                      Nomes encontrados em conversions.afiliado sem cadastro em users.
-                    </p>
+                    <h2 style={panelTitle}>Usuários inativos</h2>
+                    <p style={panelSubtitle}>{inactiveUsers.length} registro(s)</p>
                   </div>
                 </div>
 
@@ -428,41 +885,21 @@ export default function UsuariosPage() {
                   <table style={tableStyle}>
                     <thead>
                       <tr style={theadRow}>
-                        <Th>Nome no CSV</Th>
-                        <Th>Conversões</Th>
-                        <Th>Primeira</Th>
-                        <Th>Última</Th>
-                        <Th>Casas</Th>
-                        <Th>Ação</Th>
+                        <Th>Nome</Th>
+                        <Th>Email</Th>
+                        <Th>Role</Th>
+                        <Th>Status</Th>
                       </tr>
                     </thead>
                     <tbody>
-                      {unregisteredAffiliates.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} style={emptyStateTd}>
-                            Nenhum afiliado não cadastrado encontrado.
-                          </td>
+                      {inactiveUsers.map((u) => (
+                        <tr key={u.id} style={tbodyRow}>
+                          <Td>{u.nome || '-'}</Td>
+                          <Td>{u.email || '-'}</Td>
+                          <Td>{formatRole(u.role)}</Td>
+                          <Td>{u.status}</Td>
                         </tr>
-                      ) : (
-                        unregisteredAffiliates.map((affiliate) => (
-                          <tr key={affiliate.afiliado} style={tbodyRow}>
-                            <Td>{affiliate.afiliado}</Td>
-                            <Td>{affiliate.qtd_conversoes}</Td>
-                            <Td>{formatDate(affiliate.primeira_conversao)}</Td>
-                            <Td>{formatDate(affiliate.ultima_conversao)}</Td>
-                            <Td>{affiliate.casas || '-'}</Td>
-                            <Td>
-                              <button
-                                type="button"
-                                style={secondaryButton}
-                                onClick={() => fillFormFromUnregistered(affiliate)}
-                              >
-                                Criar usuário
-                              </button>
-                            </Td>
-                          </tr>
-                        ))
-                      )}
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -471,23 +908,227 @@ export default function UsuariosPage() {
           </div>
 
           <aside style={sideColumn}>
-            {canCreateUser ? (
+            {assigningAffiliate && (
               <section style={panelCard}>
                 <div style={panelHeader}>
                   <div>
-                    <h2 style={panelTitle}>Novo usuário</h2>
+                    <h2 style={panelTitle}>Atribuir afiliado do CSV</h2>
                     <p style={panelSubtitle}>
-                      A criação passa pelo Auth e vincula o usuário automaticamente.
+                      Vincule <b>{assigningAffiliate.afiliado}</b> a um usuário existente.
                     </p>
                   </div>
                 </div>
 
-                <form onSubmit={handleCreate} style={formStack}>
+                <form onSubmit={handleAssignAffiliate} style={formStack}>
+                  <Field label="Usuário">
+                    <select
+                      value={selectedAssignUserId}
+                      onChange={(e) => setSelectedAssignUserId(e.target.value)}
+                      style={inputStyle}
+                    >
+                      <option value="">Selecione</option>
+
+                      {assignUserOptions.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.nome || u.email} — {u.afiliado_nome
+                            ? `já vinculado: ${u.afiliado_nome}`
+                            : 'sem vínculo'}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <div style={warningBox}>
+                    Esta ação irá definir o match CSV deste usuário como: {assigningAffiliate.afiliado}
+                  </div>
+
+                  <div style={formActions}>
+                    <button type="submit" style={primaryButton} disabled={saving}>
+                      {saving ? 'Atribuindo...' : 'Confirmar atribuição'}
+                    </button>
+
+                    <button
+                      type="button"
+                      style={ghostButton}
+                      onClick={() => {
+                        setAssigningAffiliate(null)
+                        setSelectedAssignUserId('')
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
+            <section style={panelCard}>
+              <div style={panelHeader}>
+                <div>
+                  <h2 style={panelTitle}>
+                    {completeForm.user_id ? 'Completar / editar cadastro' : 'Completar cadastro'}
+                  </h2>
+                  <p style={panelSubtitle}>
+                    Use para liberar pendentes, editar hierarquia e atualizar links por casa.
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleCompleteUser} style={formStack}>
+                <Field label="Usuário">
+                  <select
+                    value={completeForm.user_id}
+                    onChange={(e) => {
+                      const selected = users.find((u) => u.id === e.target.value)
+
+                      if (selected) {
+                        startCompleteUser(selected)
+                      } else {
+                        setCompleteForm(emptyCompleteForm)
+                        setLinkForm({})
+                      }
+                    }}
+                    style={inputStyle}
+                  >
+                    <option value="">Selecione</option>
+                    {[...pendingUsers, ...activeUsers].map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.nome || u.email} — {u.email}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Nome">
+                  <input
+                    type="text"
+                    value={completeForm.nome}
+                    onChange={(e) =>
+                      setCompleteForm((prev) => ({ ...prev, nome: e.target.value }))
+                    }
+                    style={inputStyle}
+                  />
+                </Field>
+
+                <Field label="Nome de match no CSV">
+                  <input
+                    type="text"
+                    value={completeForm.afiliado_nome}
+                    onChange={(e) =>
+                      setCompleteForm((prev) => ({
+                        ...prev,
+                        afiliado_nome: e.target.value,
+                      }))
+                    }
+                    placeholder="Precisa bater com conversions.afiliado"
+                    style={inputStyle}
+                  />
+                </Field>
+
+                <Field label="Role">
+                  <select
+                    value={completeForm.role}
+                    onChange={(e) => {
+                      const nextRole = e.target.value as UserRole
+
+                      setCompleteForm((prev) => ({
+                        ...prev,
+                        role: nextRole,
+                        parent_id: nextRole === 'afiliado' ? prev.parent_id : '',
+                      }))
+                    }}
+                    style={inputStyle}
+                  >
+                    <option value="afiliado">Afiliado</option>
+                    <option value="gerente">Gerente</option>
+                    <option value="admin_partner">Admin partner</option>
+                  </select>
+                </Field>
+
+                {completeForm.role === 'afiliado' && (
+                  <Field label="Gerente responsável">
+                    <select
+                      value={completeForm.parent_id}
+                      onChange={(e) =>
+                        setCompleteForm((prev) => ({
+                          ...prev,
+                          parent_id: e.target.value,
+                        }))
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">Selecione</option>
+                      {managerOptions.map((manager) => (
+                        <option key={manager.id} value={manager.id}>
+                          {manager.nome}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+
+                <section style={subPanel}>
+                  <h3 style={subPanelTitle}>Links por casa</h3>
+
+                  {houses.length === 0 ? (
+                    <p style={panelSubtitle}>Nenhuma casa ativa encontrada.</p>
+                  ) : (
+                    houses.map((house) => (
+                      <Field key={house.id} label={house.name}>
+                        <input
+                          type="text"
+                          value={linkForm[house.id] || ''}
+                          onChange={(e) =>
+                            setLinkForm((prev) => ({
+                              ...prev,
+                              [house.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="Tracking link"
+                          style={inputStyle}
+                        />
+                      </Field>
+                    ))
+                  )}
+                </section>
+
+                {completeForm.user_id &&
+                  Object.values(linkForm).every((value) => !value.trim()) && (
+                    <div style={warningBox}>
+                      Este usuário ainda não possui links cadastrados.
+                    </div>
+                )}
+
+                <div style={formActions}>
+                  <button type="submit" style={primaryButton} disabled={saving}>
+                    {saving ? 'Salvando...' : 'Salvar cadastro'}
+                  </button>
+
+                  <button type="button" style={ghostButton} onClick={resetCompleteForm}>
+                    Limpar
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            {canCreateUser && (
+              <section style={panelCard}>
+                <div style={panelHeader}>
+                  <div>
+                    <h2 style={panelTitle}>Criar usuário manualmente</h2>
+                    <p style={panelSubtitle}>
+                      Fluxo administrativo via Auth. Use quando precisar criar login manual.
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleManualCreate} style={formStack}>
                   <Field label="Nome">
                     <input
                       type="text"
-                      value={form.nome}
-                      onChange={(e) => setForm((prev) => ({ ...prev, nome: e.target.value }))}
+                      value={manualForm.nome}
+                      onChange={(e) =>
+                        setManualForm((prev) => ({ ...prev, nome: e.target.value }))
+                      }
                       placeholder="Ex: AfiliadoA4"
                       style={inputStyle}
                     />
@@ -496,9 +1137,12 @@ export default function UsuariosPage() {
                   <Field label="Nome de match no CSV">
                     <input
                       type="text"
-                      value={form.afiliado_nome}
+                      value={manualForm.afiliado_nome}
                       onChange={(e) =>
-                        setForm((prev) => ({ ...prev, afiliado_nome: e.target.value }))
+                        setManualForm((prev) => ({
+                          ...prev,
+                          afiliado_nome: e.target.value,
+                        }))
                       }
                       placeholder="Precisa bater com conversions.afiliado"
                       style={inputStyle}
@@ -508,8 +1152,10 @@ export default function UsuariosPage() {
                   <Field label="Email">
                     <input
                       type="email"
-                      value={form.email}
-                      onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+                      value={manualForm.email}
+                      onChange={(e) =>
+                        setManualForm((prev) => ({ ...prev, email: e.target.value }))
+                      }
                       placeholder="Ex: afiliadoa4@test.com"
                       style={inputStyle}
                     />
@@ -518,8 +1164,13 @@ export default function UsuariosPage() {
                   <Field label="Senha temporária">
                     <input
                       type="password"
-                      value={form.senha}
-                      onChange={(e) => setForm((prev) => ({ ...prev, senha: e.target.value }))}
+                      value={manualForm.senha}
+                      onChange={(e) =>
+                        setManualForm((prev) => ({
+                          ...prev,
+                          senha: e.target.value,
+                        }))
+                      }
                       placeholder="Digite uma senha"
                       style={inputStyle}
                     />
@@ -527,14 +1178,16 @@ export default function UsuariosPage() {
 
                   <Field label="Role">
                     <select
-                      value={form.role}
-                      onChange={(e) =>
-                        setForm((prev) => ({
+                      value={manualForm.role}
+                      onChange={(e) => {
+                        const nextRole = e.target.value as UserRole
+
+                        setManualForm((prev) => ({
                           ...prev,
-                          role: e.target.value as UserRole,
-                          parent_id: e.target.value === 'afiliado' ? prev.parent_id : '',
+                          role: nextRole,
+                          parent_id: nextRole === 'afiliado' ? prev.parent_id : '',
                         }))
-                      }
+                      }}
                       style={inputStyle}
                     >
                       <option value="afiliado">Afiliado</option>
@@ -543,12 +1196,15 @@ export default function UsuariosPage() {
                     </select>
                   </Field>
 
-                  {form.role === 'afiliado' && (
+                  {manualForm.role === 'afiliado' && (
                     <Field label="Gerente responsável">
                       <select
-                        value={form.parent_id}
+                        value={manualForm.parent_id}
                         onChange={(e) =>
-                          setForm((prev) => ({ ...prev, parent_id: e.target.value }))
+                          setManualForm((prev) => ({
+                            ...prev,
+                            parent_id: e.target.value,
+                          }))
                         }
                         style={inputStyle}
                       >
@@ -567,16 +1223,11 @@ export default function UsuariosPage() {
                       {saving ? 'Criando...' : 'Criar usuário'}
                     </button>
                   </div>
-
-                  {message && <p style={messageStyle}>{message}</p>}
                 </form>
               </section>
-            ) : (
-              <section style={panelCard}>
-                <h2 style={panelTitle}>Criação bloqueada</h2>
-                <p style={panelSubtitle}>Apenas admin pode criar usuários e logins.</p>
-              </section>
             )}
+
+            {message && <p style={messageStyle}>{message}</p>}
           </aside>
         </section>
       </div>
@@ -658,7 +1309,7 @@ const pageSubtitle: React.CSSProperties = {
 
 const gridSection: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: '1.5fr 0.9fr',
+  gridTemplateColumns: '1.55fr 0.95fr',
   gap: '24px',
   alignItems: 'start',
 }
@@ -672,6 +1323,7 @@ const mainColumn: React.CSSProperties = {
 const sideColumn: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
+  gap: '24px',
 }
 
 const panelCard: React.CSSProperties = {
@@ -722,6 +1374,23 @@ const formActions: React.CSSProperties = {
   flexWrap: 'wrap',
 }
 
+const subPanel: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '14px',
+  padding: '16px',
+  borderRadius: '18px',
+  border: '1px solid rgba(34,197,94,0.1)',
+  background: 'rgba(34,197,94,0.04)',
+}
+
+const subPanelTitle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '15px',
+  fontWeight: 700,
+  color: '#bbf7d0',
+}
+
 const inputStyle: React.CSSProperties = {
   width: '100%',
   padding: '14px 16px',
@@ -754,6 +1423,17 @@ const secondaryButton: React.CSSProperties = {
   cursor: 'pointer',
   fontWeight: 700,
   fontSize: '13px',
+}
+
+const ghostButton: React.CSSProperties = {
+  border: '1px solid rgba(148,163,184,0.16)',
+  background: 'transparent',
+  color: '#cbd5e1',
+  padding: '12px 18px',
+  borderRadius: '14px',
+  cursor: 'pointer',
+  fontWeight: 600,
+  fontSize: '14px',
 }
 
 const tableStyle: React.CSSProperties = {
@@ -790,6 +1470,16 @@ const emptyStateTd: React.CSSProperties = {
   padding: '28px',
   textAlign: 'center',
   color: '#94a3b8',
+}
+
+const warningBox: React.CSSProperties = {
+  padding: '12px 14px',
+  borderRadius: '14px',
+  background: 'rgba(250,204,21,0.08)',
+  border: '1px solid rgba(250,204,21,0.18)',
+  color: '#fde68a',
+  fontSize: '13px',
+  lineHeight: 1.4,
 }
 
 const messageStyle: React.CSSProperties = {
