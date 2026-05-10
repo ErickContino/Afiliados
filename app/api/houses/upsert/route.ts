@@ -58,6 +58,55 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Dados inválidos.' }, { status: 400 })
     }
 
+    const grossValue = Number(gross_value)
+    const boxValue = Number(michael_box_value)
+    const poolValue = Number(commission_pool_value)
+
+    if (
+      Number.isNaN(grossValue) ||
+      Number.isNaN(boxValue) ||
+      Number.isNaN(poolValue)
+    ) {
+      return NextResponse.json({ error: 'Valores numéricos inválidos.' }, { status: 400 })
+    }
+
+    if (grossValue !== boxValue + poolValue) {
+      return NextResponse.json(
+        { error: 'O valor bruto deve ser igual à Taxa de Operação + Pool de Comissão.' },
+        { status: 400 }
+      )
+    }
+
+    const adminPartnerRule = rules.find(
+      (r: any) =>
+        r.receiver_role === 'admin_partner' &&
+        ['gerente', 'afiliado'].includes(r.lead_owner_role)
+    )
+
+    const adminPartnerAmount = adminPartnerRule ? Number(adminPartnerRule.amount) : 0
+
+    const { count: activePartnerCount, error: partnerCountError } = await supabaseAdmin
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('role', 'admin_partner')
+      .eq('status', 'active')
+
+    if (partnerCountError) {
+      return NextResponse.json({ error: partnerCountError.message }, { status: 400 })
+    }
+
+    const totalAdminPartners = (activePartnerCount || 0) * adminPartnerAmount
+
+    if (poolValue < totalAdminPartners) {
+      return NextResponse.json(
+        {
+          error:
+            'Pool de Comissão insuficiente para pagar todos os admin_partners ativos.',
+        },
+        { status: 400 }
+      )
+    }
+
     const now = new Date().toISOString()
 
     const { data: currentHouse } = await supabaseAdmin
@@ -100,9 +149,9 @@ export async function POST(req: Request) {
       .from('houses')
       .insert({
         name,
-        gross_value,
-        michael_box_value,
-        commission_pool_value,
+        gross_value: grossValue,
+        michael_box_value: boxValue,
+        commission_pool_value: poolValue,
         active: true,
         valid_from: now,
         valid_to: null,

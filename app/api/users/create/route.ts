@@ -83,8 +83,16 @@ export async function POST(req: Request) {
     })
 
     if (userError) {
+      const errorMessage =
+        userError.message?.includes('users_nome_unique_normalized') ||
+        userError.message?.includes('users_email_unique_normalized') ||
+        userError.message?.includes('users_afiliado_nome_unique_normalized') ||
+        userError.message?.includes('duplicate key value')
+          ? 'Já existe um usuário com esse nome, e-mail ou nome de afiliado.'
+          : userError.message
+
       return NextResponse.json(
-        { error: userError.message },
+        { error: errorMessage },
         { status: 400 }
       )
     }

@@ -25,6 +25,7 @@ type UserRow = {
 type HouseRow = {
   id: string
   name: string
+  commission_pool_value?: number
 }
 
 type CommissionSettingRow = {
@@ -127,7 +128,7 @@ export default function ComissoesPage() {
 
     const housesResponse = await supabase
       .from('houses')
-      .select('id, name')
+      .select('id, name, commission_pool_value')
       .eq('active', true)
       .order('name')
 
@@ -308,7 +309,10 @@ export default function ComissoesPage() {
       setSaving(false)
 
       if (!res.ok) {
-        setMessage(data.error || 'Erro ao salvar comissão.')
+        setMessage(
+          data.error ||
+            'Erro ao salvar comissão. Verifique se o valor não ultrapassa o limite permitido da casa.'
+        )
         return
       }
 
@@ -366,6 +370,18 @@ export default function ComissoesPage() {
         item.house_id === form.house_id
     )
   }, [settings, form.affiliate_user_id, form.house_id])
+
+  const selectedHouseData = useMemo(() => {
+    if (!form.house_id) return null
+
+    return houses.find((house) => house.id === form.house_id) || null
+  }, [houses, form.house_id])
+
+  const estimatedMaxAffiliateCommission = useMemo(() => {
+    if (!selectedHouseData?.commission_pool_value) return null
+
+    return Number(selectedHouseData.commission_pool_value)
+  }, [selectedHouseData])
 
   const missingCommissionSettings = useMemo(() => {
     return affiliateOptions.flatMap((affiliate) => {
@@ -677,6 +693,16 @@ export default function ComissoesPage() {
                   {selectedCurrentSetting && (
                     <div style={infoBox}>
                       Comissão atual: R$ {Number(selectedCurrentSetting.affiliate_amount || 0).toFixed(2)}
+                    </div>
+                  )}
+
+                  {estimatedMaxAffiliateCommission !== null && (
+                    <div style={limitInfoBox}>
+                      Máximo estimado nesta casa: R$ {estimatedMaxAffiliateCommission.toFixed(2)}
+                      <br />
+                      <span style={{ color: '#94a3b8', fontWeight: 500 }}>
+                        O backend valida o limite real considerando a pool e os admin partners ativos.
+                      </span>
                     </div>
                   )}
 
@@ -994,4 +1020,15 @@ const blockedText: React.CSSProperties = {
   margin: '10px 0 0',
   color: '#94a3b8',
   fontSize: '15px',
+}
+
+const limitInfoBox: React.CSSProperties = {
+  padding: '12px 14px',
+  borderRadius: '14px',
+  background: 'rgba(59,130,246,0.08)',
+  border: '1px solid rgba(59,130,246,0.18)',
+  color: '#bfdbfe',
+  fontSize: '13px',
+  fontWeight: 700,
+  lineHeight: 1.5,
 }

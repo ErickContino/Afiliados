@@ -33,6 +33,7 @@ type UserHouseLink = {
   user_id: string
   house_id: string
   tracking_link: string
+  baseline_value: number | null
   active: boolean
 }
 
@@ -83,6 +84,7 @@ export default function UsuariosPage() {
   const [houses, setHouses] = useState<HouseRow[]>([])
   const [links, setLinks] = useState<UserHouseLink[]>([])
   const [linkForm, setLinkForm] = useState<Record<string, string>>({})
+  const [baselineForm, setBaselineForm] = useState<Record<string, string>>({})
 
   const [unregisteredAffiliates, setUnregisteredAffiliates] = useState<UnregisteredAffiliate[]>([])
   const [currentUser, setCurrentUser] = useState<LoggedUser | null>(null)
@@ -176,7 +178,7 @@ export default function UsuariosPage() {
   async function loadLinks() {
     const { data, error } = await supabase
       .from('user_house_links')
-      .select('id, user_id, house_id, tracking_link, active')
+      .select('id, user_id, house_id, tracking_link, baseline_value, active')
       .eq('active', true)
 
     if (error || !data) {
@@ -190,7 +192,7 @@ export default function UsuariosPage() {
   async function loadLinksForUser(userId: string) {
     const { data, error } = await supabase
       .from('user_house_links')
-      .select('id, user_id, house_id, tracking_link, active')
+      .select('id, user_id, house_id, tracking_link, baseline_value, active')
       .eq('user_id', userId)
       .eq('active', true)
 
@@ -334,12 +336,18 @@ export default function UsuariosPage() {
       return
     }
 
-    const linksPayload = Object.entries(linkForm)
-      .filter(([, value]) => value.trim())
-      .map(([house_id, tracking_link]) => ({
-        house_id,
-        tracking_link: tracking_link.trim(),
-      }))
+    const linksPayload = houses
+      .map((house) => {
+        const trackingLink = linkForm[house.id]?.trim() || ''
+        const baselineValue = baselineForm[house.id]?.trim() || ''
+
+        return {
+          house_id: house.id,
+          tracking_link: trackingLink,
+          baseline_value: baselineValue ? Number(baselineValue) : null,
+        }
+      })
+      .filter((item) => item.tracking_link || item.baseline_value !== null)
 
     setSaving(true)
 
@@ -381,6 +389,7 @@ export default function UsuariosPage() {
       setMessage('Cadastro salvo com sucesso.')
       setCompleteForm(emptyCompleteForm)
       setLinkForm({})
+      setBaselineForm({})
       await reloadAll()
     } catch {
       setSaving(false)
@@ -456,6 +465,56 @@ export default function UsuariosPage() {
     }
   }
 
+  async function handleDeactivate(userId: string) {
+    const { data: sessionData } = await supabase.auth.getSession()
+
+    const res = await fetch('/api/users/deactivate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionData.session?.access_token}`,
+      },
+      body: JSON.stringify({
+        user_id: userId,
+      }),
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      setMessage(data.error || 'Erro ao desativar usuário.')
+      return
+    }
+
+    setMessage('Usuário desativado com sucesso.')
+    await reloadAll()
+  }
+
+  async function handleReactivate(userId: string) {
+    const { data: sessionData } = await supabase.auth.getSession()
+
+    const res = await fetch('/api/users/reactivate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionData.session?.access_token}`,
+      },
+      body: JSON.stringify({
+        user_id: userId,
+      }),
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      setMessage(data.error || 'Erro ao reativar usuário.')
+      return
+    }
+
+    setMessage('Usuário reativado com sucesso.')
+    await reloadAll()
+  }
+
   async function startCompleteUser(user: UserRow) {
     setCompleteForm({
       user_id: user.id,
@@ -468,19 +527,27 @@ export default function UsuariosPage() {
     const userLinks = await loadLinksForUser(user.id)
 
     const nextLinks: Record<string, string> = {}
+    const nextBaselines: Record<string, string> = {}
 
     for (const house of houses) {
       const existingLink = userLinks.find((link) => link.house_id === house.id)
+
       nextLinks[house.id] = existingLink?.tracking_link || ''
+      nextBaselines[house.id] =
+        existingLink?.baseline_value !== null && existingLink?.baseline_value !== undefined
+          ? String(existingLink.baseline_value)
+          : ''
     }
 
     setLinkForm(nextLinks)
+    setBaselineForm(nextBaselines)
     setMessage(`Editando cadastro de ${user.nome || user.email}.`)
   }
 
   function resetCompleteForm() {
     setCompleteForm(emptyCompleteForm)
     setLinkForm({})
+    setBaselineForm({})
     setMessage('')
   }
 
@@ -567,6 +634,16 @@ export default function UsuariosPage() {
     }
 
     return map[role] || role
+  }
+
+  function formatStatus(status?: 'pending' | 'active' | 'inactive') {
+    const map = {
+      pending: 'Pendente',
+      active: 'Ativo',
+      inactive: 'Inativo',
+    }
+
+    return map[status || 'pending']
   }
 
   function getLinkSummary(userId: string) {
@@ -686,7 +763,7 @@ export default function UsuariosPage() {
                         <tr key={u.id} style={tbodyRow}>
                           <Td>{u.nome || '-'}</Td>
                           <Td>{u.email || '-'}</Td>
-                          <Td>pending</Td>
+                          <Td>{formatStatus(u.status)}</Td>
                           <Td>
                             <button
                               type="button"
@@ -834,6 +911,7 @@ export default function UsuariosPage() {
                       <Th>Nome CSV</Th>
                       <Th>Email</Th>
                       <Th>Role</Th>
+                      <Th>Status</Th>
                       <Th>Gerente</Th>
                       <Th>Links</Th>
                       <Th>Ação</Th>
@@ -842,7 +920,7 @@ export default function UsuariosPage() {
                   <tbody>
                     {filteredActiveUsers.length === 0 ? (
                       <tr>
-                        <td colSpan={7} style={emptyStateTd}>
+                        <td colSpan={8} style={emptyStateTd}>
                           Nenhum usuário ativo encontrado.
                         </td>
                       </tr>
@@ -853,16 +931,30 @@ export default function UsuariosPage() {
                           <Td>{u.afiliado_nome || '-'}</Td>
                           <Td>{u.email || '-'}</Td>
                           <Td>{formatRole(u.role)}</Td>
+                          <Td>{formatStatus(u.status)}</Td>
                           <Td>{getParentName(u.parent_id)}</Td>
                           <Td>{getLinkSummary(u.id)}</Td>
                           <Td>
-                            <button
-                              type="button"
-                              style={secondaryButton}
-                              onClick={() => startCompleteUser(u)}
-                            >
-                              Editar cadastro
-                            </button>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                style={secondaryButton}
+                                onClick={() => startCompleteUser(u)}
+                              >
+                                Editar cadastro
+                              </button>
+
+                              {currentUser?.db?.role === 'admin_master' &&
+                                u.role !== 'admin_master' && (
+                                  <button
+                                    type="button"
+                                    style={dangerButton}
+                                    onClick={() => handleDeactivate(u.id)}
+                                  >
+                                    Desativar
+                                  </button>
+                                )}
+                            </div>
                           </Td>
                         </tr>
                       ))
@@ -889,6 +981,7 @@ export default function UsuariosPage() {
                         <Th>Email</Th>
                         <Th>Role</Th>
                         <Th>Status</Th>
+                        <Th>Ações</Th>
                       </tr>
                     </thead>
                     <tbody>
@@ -897,7 +990,16 @@ export default function UsuariosPage() {
                           <Td>{u.nome || '-'}</Td>
                           <Td>{u.email || '-'}</Td>
                           <Td>{formatRole(u.role)}</Td>
-                          <Td>{u.status}</Td>
+                          <Td>{formatStatus(u.status)}</Td>
+                          <Td>
+                            <button
+                              type="button"
+                              style={primaryButton}
+                              onClick={() => handleReactivate(u.id)}
+                            >
+                              Reativar
+                            </button>
+                          </Td>
                         </tr>
                       ))}
                     </tbody>
@@ -985,6 +1087,7 @@ export default function UsuariosPage() {
                       } else {
                         setCompleteForm(emptyCompleteForm)
                         setLinkForm({})
+                        setBaselineForm({})
                       }
                     }}
                     style={inputStyle}
@@ -1073,20 +1176,39 @@ export default function UsuariosPage() {
                     <p style={panelSubtitle}>Nenhuma casa ativa encontrada.</p>
                   ) : (
                     houses.map((house) => (
-                      <Field key={house.id} label={house.name}>
-                        <input
-                          type="text"
-                          value={linkForm[house.id] || ''}
-                          onChange={(e) =>
-                            setLinkForm((prev) => ({
-                              ...prev,
-                              [house.id]: e.target.value,
-                            }))
-                          }
-                          placeholder="Tracking link"
-                          style={inputStyle}
-                        />
-                      </Field>
+                      <div key={house.id} style={linkEditCard}>
+                        <Field label={`${house.name} — Tracking link`}>
+                          <input
+                            type="text"
+                            value={linkForm[house.id] || ''}
+                            onChange={(e) =>
+                              setLinkForm((prev) => ({
+                                ...prev,
+                                [house.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Tracking link"
+                            style={inputStyle}
+                          />
+                        </Field>
+
+                        <Field label="Baseline">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={baselineForm[house.id] || ''}
+                            onChange={(e) =>
+                              setBaselineForm((prev) => ({
+                                ...prev,
+                                [house.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Ex: 50"
+                            style={inputStyle}
+                          />
+                        </Field>
+                      </div>
                     ))
                   )}
                 </section>
@@ -1335,6 +1457,16 @@ const panelCard: React.CSSProperties = {
   padding: '22px 24px',
 }
 
+const linkEditCard: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '12px',
+  padding: '14px',
+  borderRadius: '16px',
+  border: '1px solid rgba(34,197,94,0.1)',
+  background: 'rgba(2, 6, 23, 0.45)',
+}
+
 const panelHeader: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
@@ -1418,6 +1550,17 @@ const secondaryButton: React.CSSProperties = {
   border: '1px solid rgba(34,197,94,0.18)',
   background: 'rgba(34,197,94,0.08)',
   color: '#bbf7d0',
+  padding: '9px 12px',
+  borderRadius: '12px',
+  cursor: 'pointer',
+  fontWeight: 700,
+  fontSize: '13px',
+}
+
+const dangerButton: React.CSSProperties = {
+  border: '1px solid rgba(239,68,68,0.25)',
+  background: 'rgba(239,68,68,0.12)',
+  color: '#fecaca',
   padding: '9px 12px',
   borderRadius: '12px',
   cursor: 'pointer',

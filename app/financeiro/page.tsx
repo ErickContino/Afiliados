@@ -43,6 +43,21 @@ type FinancialHouse = {
   amount: number
 }
 
+type AdminPayable = {
+  user_id: string
+  nome: string | null
+  email: string | null
+  role: UserRole | null
+  period_year: number
+  period_month: number
+  period_start: string
+  period_end: string
+  amount: number
+  payout_status: string
+  invoice_status: string
+  paid_at: string | null
+}
+
 export default function FinanceiroPage() {
   const [userDb, setUserDb] = useState<UserRow | null>(null)
   const [overview, setOverview] = useState<FinancialOverview | null>(null)
@@ -52,6 +67,11 @@ export default function FinanceiroPage() {
   const [loading, setLoading] = useState(true)
   const [loadingHouses, setLoadingHouses] = useState(false)
   const [message, setMessage] = useState('')
+  const [paying, setPaying] = useState(false)
+  const [paymentNotes, setPaymentNotes] = useState('')
+  const [activeTab, setActiveTab] = useState<'meu' | 'pagamentos'>('meu')
+  const [adminPayables, setAdminPayables] = useState<AdminPayable[]>([])
+  const [loadingPayables, setLoadingPayables] = useState(false)
 
   useEffect(() => {
     init()
@@ -111,6 +131,9 @@ export default function FinanceiroPage() {
 
     setOverview(overviewData as FinancialOverview)
     setMonths((monthsResponse.data || []) as FinancialMonth[])
+    if (currentUser.role === 'admin_master') {
+      await loadAdminPayables()
+    }
 
     const firstMonth = (monthsResponse.data || [])[0] as FinancialMonth | undefined
 
@@ -143,6 +166,82 @@ export default function FinanceiroPage() {
   async function selectMonth(month: FinancialMonth) {
     setSelectedMonth(month)
     await loadHouses(month.period_year, month.period_month)
+  }
+
+  async function loadAdminPayables() {
+    setLoadingPayables(true)
+
+    const { data, error } = await supabase.rpc('get_admin_financial_payables')
+
+    if (error) {
+      setMessage(`Erro ao carregar pagamentos: ${error.message}`)
+      setLoadingPayables(false)
+      return
+    }
+
+    setAdminPayables((data || []) as AdminPayable[])
+    setLoadingPayables(false)
+  }
+
+  async function handleMarkPaid(payable: {
+    user_id: string
+    period_year: number
+    period_month: number
+  }) {
+    if (!userDb || userDb.role !== 'admin_master') return
+
+    const confirmed = window.confirm(
+      `Confirmar baixa de ${formatMonthName(payable.period_month, payable.period_year)}?`
+    )
+
+    if (!confirmed) return
+
+    setPaying(true)
+    setMessage('')
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        setMessage('Sessão inválida. Faça login novamente.')
+        setPaying(false)
+        return
+      }
+
+      const res = await fetch('/api/financial/mark-paid', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          user_id: payable.user_id,
+          period_year: payable.period_year,
+          period_month: payable.period_month,
+          notes: paymentNotes.trim() || null,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setMessage(data.error || 'Erro ao marcar como pago.')
+        setPaying(false)
+        return
+      }
+
+      setMessage('Pagamento marcado como pago com sucesso.')
+      setPaymentNotes('')
+
+      await init()
+      await loadAdminPayables()
+
+      setPaying(false)
+    } catch {
+      setMessage('Erro inesperado ao marcar como pago.')
+      setPaying(false)
+    }
   }
 
   function formatMoney(value?: number | null) {
@@ -266,7 +365,123 @@ export default function FinanceiroPage() {
           </div>
         </header>
 
-        <section style={cardsGrid}>
+        {userDb.role === 'admin_master' && (
+          <div style={tabsBar}>
+            <button
+              type="button"
+              style={activeTab === 'meu' ? activeTabButton : tabButton}
+              onClick={() => setActiveTab('meu')}
+            >
+              Meu Financeiro
+            </button>
+
+            <button
+              type="button"
+              style={activeTab === 'pagamentos' ? activeTabButton : tabButton}
+              onClick={() => setActiveTab('pagamentos')}
+            >
+              Pagamentos
+            </button>
+          </div>
+        )}
+
+        {message && <p style={messageStyle}>{message}</p>}
+
+        {activeTab === 'pagamentos' && userDb.role === 'admin_master' && (
+          <section style={panelCard}>
+            <div style={panelHeader}>
+              <div>
+                <h2 style={panelTitle}>Pagamentos / Controle de Pagamentos</h2>
+                <p style={panelSubtitle}>
+                  Controle mensal de valores a pagar para todos os usuários ativos.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '18px' }}>
+              <textarea
+                value={paymentNotes}
+                onChange={(e) => setPaymentNotes(e.target.value)}
+                placeholder="Observações da baixa..."
+                style={textareaStyle}
+              />
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={tableStyle}>
+                <thead>
+                  <tr style={theadRow}>
+                    <Th>Usuário</Th>
+                    <Th>Role</Th>
+                    <Th>Competência</Th>
+                    <Th>Período</Th>
+                    <Th>Valor</Th>
+                    <Th>Status pagamento</Th>
+                    <Th>Status NF</Th>
+                    <Th>Pago em</Th>
+                    <Th>Ação</Th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loadingPayables ? (
+                    <tr>
+                      <td colSpan={9} style={emptyStateTd}>
+                        Carregando pagamentos...
+                      </td>
+                    </tr>
+                  ) : adminPayables.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} style={emptyStateTd}>
+                        Nenhum pagamento encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    adminPayables.map((payable) => (
+                      <tr
+                        key={`${payable.user_id}-${payable.period_year}-${payable.period_month}`}
+                        style={tbodyRow}
+                      >
+                        <Td>{payable.nome || payable.email || '-'}</Td>
+                        <Td>{payable.role || '-'}</Td>
+                        <Td>{formatMonthName(payable.period_month, payable.period_year)}</Td>
+                        <Td>
+                          {formatDate(payable.period_start)} até {formatDate(payable.period_end)}
+                        </Td>
+                        <Td>{formatMoney(payable.amount)}</Td>
+                        <Td>{formatPayoutStatus(payable.payout_status, false)}</Td>
+                        <Td>{formatInvoiceStatus(payable.invoice_status)}</Td>
+                        <Td>
+                          {payable.paid_at
+                            ? new Date(payable.paid_at).toLocaleDateString('pt-BR')
+                            : '-'}
+                        </Td>
+                        <Td>
+                          {payable.payout_status !== 'paid' ? (
+                            <button
+                              type="button"
+                              style={primaryButton}
+                              disabled={paying}
+                              onClick={() => handleMarkPaid(payable)}
+                            >
+                              {paying ? 'Salvando...' : 'Dar baixa'}
+                            </button>
+                          ) : (
+                            <span style={{ color: '#94a3b8' }}>Pago</span>
+                          )}
+                        </Td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'meu' && (
+          <>
+            <section style={cardsGrid}>
           <section style={featuredCard}>
             <p style={cardLabel}>Saldo disponível para saque</p>
             <h2 style={bigValue}>{formatMoney(overview?.available_balance)}</h2>
@@ -300,8 +515,6 @@ export default function FinanceiroPage() {
             )}
           </section>
         </section>
-
-        {message && <p style={messageStyle}>{message}</p>}
 
         <section style={gridSection}>
           <div style={mainColumn}>
@@ -346,13 +559,15 @@ export default function FinanceiroPage() {
                           <Td>{formatInvoiceStatus(month.invoice_status)}</Td>
                           <Td>{month.paid_at ? new Date(month.paid_at).toLocaleDateString('pt-BR') : '-'}</Td>
                           <Td>
-                            <button
-                              type="button"
-                              style={secondaryButton}
-                              onClick={() => selectMonth(month)}
-                            >
-                              Ver casas
-                            </button>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                style={secondaryButton}
+                                onClick={() => selectMonth(month)}
+                              >
+                                Ver casas
+                              </button>
+                            </div>
                           </Td>
                         </tr>
                       ))
@@ -391,9 +606,9 @@ export default function FinanceiroPage() {
             </section>
           </div>
 
-          <aside style={sideColumn}>
-            <section style={panelCard}>
-              <h2 style={panelTitle}>Informações para NF</h2>
+            <aside style={sideColumn}>
+              <section style={panelCard}>
+                <h2 style={panelTitle}>Informações para NF</h2>
               <p style={panelSubtitle}>
                 Use estas informações para emissão da nota fiscal.
               </p>
@@ -423,9 +638,11 @@ export default function FinanceiroPage() {
                 Emita a nota fiscal com o valor do fechamento indicado na competência correspondente.
               </div>
             </section>
-          </aside>
-        </section>
-      </div>
+                    </aside>
+                  </section>
+                </>
+              )}
+                </div>
     </LayoutShell>
   )
 }
@@ -716,4 +933,55 @@ const blockedText: React.CSSProperties = {
   margin: '10px 0 0',
   color: '#94a3b8',
   fontSize: '15px',
+}
+
+const primaryButton: React.CSSProperties = {
+  border: '1px solid rgba(34,197,94,0.25)',
+  background: 'linear-gradient(180deg, #16a34a, #15803d)',
+  color: '#f0fdf4',
+  padding: '9px 12px',
+  borderRadius: '10px',
+  cursor: 'pointer',
+  fontWeight: 700,
+  fontSize: '13px',
+  boxShadow: '0 0 18px rgba(34,197,94,0.16)',
+}
+
+const textareaStyle: React.CSSProperties = {
+  width: '100%',
+  minHeight: '90px',
+  marginTop: '16px',
+  padding: '14px 16px',
+  background: 'rgba(2, 6, 23, 0.85)',
+  color: '#f8fafc',
+  border: '1px solid rgba(34,197,94,0.14)',
+  borderRadius: '14px',
+  outline: 'none',
+  fontSize: '14px',
+  resize: 'vertical',
+}
+
+const tabsBar: React.CSSProperties = {
+  display: 'flex',
+  gap: '10px',
+  marginBottom: '24px',
+  flexWrap: 'wrap',
+}
+
+const tabButton: React.CSSProperties = {
+  border: '1px solid rgba(34,197,94,0.14)',
+  background: 'rgba(2, 6, 23, 0.65)',
+  color: '#94a3b8',
+  padding: '11px 16px',
+  borderRadius: '14px',
+  cursor: 'pointer',
+  fontWeight: 700,
+  fontSize: '14px',
+}
+
+const activeTabButton: React.CSSProperties = {
+  ...tabButton,
+  background: 'rgba(34,197,94,0.12)',
+  color: '#bbf7d0',
+  border: '1px solid rgba(34,197,94,0.26)',
 }

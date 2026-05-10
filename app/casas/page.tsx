@@ -179,7 +179,7 @@ export default function CasasPage() {
     }
 
     if (!form.name || !form.gross_value || !form.michael_box_value || !form.commission_pool_value) {
-      setMessage('Preencha nome, valor bruto, caixinha e pool de comissão.')
+      setMessage('Preencha nome, valor bruto, taxa de operação e pool de comissão.')
       return
     }
 
@@ -197,7 +197,7 @@ export default function CasasPage() {
     }
 
     if (grossValue !== boxValue + poolValue) {
-      setMessage('Valor bruto precisa ser igual a caixinha + pool de comissão.')
+      setMessage('Valor bruto precisa ser igual a taxa de operação + pool de comissão.')
       return
     }
 
@@ -305,6 +305,16 @@ export default function CasasPage() {
     )
   }
 
+  const calculatedPool =
+    Number(form.gross_value || 0) - Number(form.michael_box_value || 0)
+
+  const informedPool = Number(form.commission_pool_value || 0)
+
+  const poolMismatch =
+    !Number.isNaN(calculatedPool) &&
+    !Number.isNaN(informedPool) &&
+    calculatedPool !== informedPool
+
   return (
     <LayoutShell
       active="casas"
@@ -341,7 +351,7 @@ export default function CasasPage() {
                     <tr style={theadRow}>
                       <Th>Casa</Th>
                       <Th>Valor bruto</Th>
-                      <Th>Caixinha</Th>
+                      <Th>Taxa de operação</Th>
                       <Th>Pool comissão</Th>
                       <Th>Vigência</Th>
                       <Th>Status</Th>
@@ -415,7 +425,7 @@ export default function CasasPage() {
                   />
                 </Field>
 
-                <Field label="Caixinha Michael">
+                <Field label="Taxa de operação">
                   <input
                     type="number"
                     step="0.01"
@@ -429,6 +439,27 @@ export default function CasasPage() {
                 </Field>
 
                 <Field label="Pool de comissão">
+                  <section style={poolPreviewCard}>
+                    <div style={poolPreviewRow}>
+                      <span>Valor bruto</span>
+                      <strong>R$ {Number(form.gross_value || 0).toFixed(2)}</strong>
+                    </div>
+
+                    <div style={poolPreviewRow}>
+                      <span>Taxa operacional</span>
+                      <strong>- R$ {Number(form.michael_box_value || 0).toFixed(2)}</strong>
+                    </div>
+
+                    <div style={poolDivider} />
+
+                    <div style={poolPreviewResult}>
+                      <span>Pool disponível</span>
+
+                      <strong>
+                        R$ {(Number(form.gross_value || 0) - Number(form.michael_box_value || 0)).toFixed(2)}
+                      </strong>
+                    </div>
+                  </section>
                   <input
                     type="number"
                     step="0.01"
@@ -439,6 +470,13 @@ export default function CasasPage() {
                     style={inputStyle}
                     placeholder="Ex: 150"
                   />
+                  {poolMismatch && (
+                    <div style={errorBox}>
+                      O pool informado não bate com:
+                      <br />
+                      Valor bruto - taxa de operação.
+                    </div>
+                  )}
                 </Field>
 
                 <Field label="Válido a partir de">
@@ -457,7 +495,14 @@ export default function CasasPage() {
                 <section style={subPanel}>
                   <h3 style={subPanelTitle}>Regras obrigatórias</h3>
 
-                  <Field label="Lead admin master → Admin master">
+                  <Field
+                    label={
+                      <RuleLabel
+                        text="Admin master trouxe o lead → Admin master recebe"
+                        info="Quando o próprio admin master é o dono do lead, ele recebe o valor completo definido para essa situação."
+                      />
+                    }
+                  >
                     <input
                       type="number"
                       step="0.01"
@@ -467,7 +512,14 @@ export default function CasasPage() {
                     />
                   </Field>
 
-                  <Field label="Lead admin partner → Admin partner">
+                  <Field
+                    label={
+                      <RuleLabel
+                        text="Admin partner trouxe o lead → Admin partner recebe"
+                        info="Quando um admin partner é o dono do lead, ele recebe a pool de comissão definida para essa situação."
+                      />
+                    }
+                  >
                     <input
                       type="number"
                       step="0.01"
@@ -477,7 +529,14 @@ export default function CasasPage() {
                     />
                   </Field>
 
-                  <Field label="Lead gerente → Admin master">
+                  <Field
+                    label={
+                      <RuleLabel
+                        text="Gerente trouxe o lead → Admin master recebe"
+                        info="Valor destinado ao admin master quando o lead pertence a um gerente."
+                      />
+                    }
+                  >
                     <input
                       type="number"
                       step="0.01"
@@ -487,7 +546,14 @@ export default function CasasPage() {
                     />
                   </Field>
 
-                  <Field label="Lead gerente → Admin partner">
+                  <Field
+                    label={
+                      <RuleLabel
+                        text="Gerente trouxe o lead → Admin partner recebe"
+                        info="Valor que cada admin partner ativo recebe quando o lead pertence a um gerente."
+                      />
+                    }
+                  >
                     <input
                       type="number"
                       step="0.01"
@@ -497,7 +563,14 @@ export default function CasasPage() {
                     />
                   </Field>
 
-                  <Field label="Lead gerente → Gerente">
+                  <Field
+                    label={
+                      <RuleLabel
+                        text="Gerente trouxe o lead → Gerente recebe"
+                        info="Valor destinado ao gerente quando ele próprio é o dono do lead."
+                      />
+                    }
+                  >
                     <input
                       type="number"
                       step="0.01"
@@ -507,7 +580,14 @@ export default function CasasPage() {
                     />
                   </Field>
 
-                  <Field label="Lead afiliado → Admin master">
+                  <Field
+                    label={
+                      <RuleLabel
+                        text="Afiliado trouxe o lead → Admin master recebe"
+                        info="Valor destinado ao admin master quando o lead pertence a um afiliado."
+                      />
+                    }
+                  >
                     <input
                       type="number"
                       step="0.01"
@@ -517,7 +597,14 @@ export default function CasasPage() {
                     />
                   </Field>
 
-                  <Field label="Lead afiliado → Admin partner">
+                  <Field
+                    label={
+                      <RuleLabel
+                        text="Afiliado trouxe o lead → Admin partner recebe"
+                        info="Valor que cada admin partner ativo recebe quando o lead pertence a um afiliado."
+                      />
+                    }
+                  >
                     <input
                       type="number"
                       step="0.01"
@@ -527,7 +614,14 @@ export default function CasasPage() {
                     />
                   </Field>
 
-                  <Field label="Lead afiliado → Gerente">
+                  <Field
+                    label={
+                      <RuleLabel
+                        text="Afiliado trouxe o lead → Gerente recebe"
+                        info="Este é o teto/base do gerente. A comissão do afiliado configurada na tela de Comissões sai deste valor."
+                      />
+                    }
+                  >
                     <input
                       type="number"
                       step="0.01"
@@ -562,7 +656,24 @@ export default function CasasPage() {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function RuleLabel({
+  text,
+  info,
+}: {
+  text: string
+  info: string
+}) {
+  return (
+    <span style={ruleLabel}>
+      {text}
+      <span style={infoIcon} title={info}>
+        ⓘ
+      </span>
+    </span>
+  )
+}
+
+function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
       <label style={{ fontSize: '14px', color: '#cbd5e1' }}>{label}</label>
@@ -639,6 +750,9 @@ const mainColumn: React.CSSProperties = {
 const sideColumn: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
+  position: 'sticky',
+  top: '24px',
+  alignSelf: 'start',
 }
 
 const panelCard: React.CSSProperties = {
@@ -800,4 +914,56 @@ const messageStyle: React.CSSProperties = {
   margin: 0,
   color: '#bbf7d0',
   fontSize: '14px',
+}
+
+const poolPreviewCard: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '12px',
+  padding: '16px',
+  borderRadius: '18px',
+  border: '1px solid rgba(34,197,94,0.12)',
+  background: 'rgba(34,197,94,0.04)',
+}
+
+const poolPreviewRow: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  color: '#cbd5e1',
+  fontSize: '14px',
+}
+
+const poolDivider: React.CSSProperties = {
+  height: '1px',
+  background: 'rgba(34,197,94,0.12)',
+}
+
+const poolPreviewResult: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  color: '#bbf7d0',
+  fontSize: '16px',
+  fontWeight: 700,
+}
+
+const errorBox: React.CSSProperties = {
+  padding: '12px 14px',
+  borderRadius: '14px',
+  background: 'rgba(239,68,68,0.08)',
+  border: '1px solid rgba(239,68,68,0.18)',
+  color: '#fecaca',
+  fontSize: '13px',
+  lineHeight: 1.5,
+}
+
+const ruleLabel: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '6px',
+}
+
+const infoIcon: React.CSSProperties = {
+  color: '#86efac',
+  cursor: 'help',
+  fontWeight: 800,
 }

@@ -88,12 +88,12 @@ export default function LayoutShell({
               gap: '14px',
             }}
           >
-            <div style={logoBox}>GA</div>
+            <div style={logoBox}>AZ</div>
 
             {!collapsed && (
               <div>
-                <h2 style={brandTitle}>Gestão de Afiliados</h2>
-                <p style={brandSubtitle}>Painel operacional</p>
+                <h2 style={brandTitle}>AfiliaZap</h2>
+                <p style={brandSubtitle}>AfiliaZap</p>
               </div>
             )}
           </div>

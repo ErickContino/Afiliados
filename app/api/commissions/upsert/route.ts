@@ -114,26 +114,66 @@ export async function POST(req: Request) {
       )
     }
 
-    const { data: managerRule, error: managerRuleError } = await supabaseAdmin
-      .from('commission_rules')
-      .select('amount')
-      .eq('house_id', house_id)
-      .eq('lead_owner_role', 'gerente')
-      .eq('receiver_role', 'gerente')
+    const { data: house, error: houseError } = await supabaseAdmin
+      .from('houses')
+      .select('commission_pool_value')
+      .eq('id', house_id)
+      .eq('active', true)
       .single()
 
-    if (managerRuleError || !managerRule) {
+    if (houseError || !house) {
       return NextResponse.json(
-        { error: 'Regra de gerente não encontrada para essa casa.' },
+        { error: 'Casa ativa não encontrada.' },
         { status: 400 }
       )
     }
 
-    const managerBaseAmount = Number(managerRule.amount)
+    const { data: adminPartnerRule, error: adminPartnerRuleError } = await supabaseAdmin
+      .from('commission_rules')
+      .select('amount')
+      .eq('house_id', house_id)
+      .eq('receiver_role', 'admin_partner')
+      .eq('lead_owner_role', 'afiliado')
+      .eq('active', true)
+      .single()
 
-    if (amountNumber > managerBaseAmount) {
+    if (adminPartnerRuleError || !adminPartnerRule) {
       return NextResponse.json(
-        { error: `A comissão do afiliado não pode passar de R$ ${managerBaseAmount.toFixed(2)}.` },
+        { error: 'Regra de admin_partner para afiliado não encontrada nessa casa.' },
+        { status: 400 }
+      )
+    }
+
+    const { count: activePartnerCount, error: partnerCountError } = await supabaseAdmin
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('role', 'admin_partner')
+      .eq('status', 'active')
+
+    if (partnerCountError) {
+      return NextResponse.json(
+        { error: partnerCountError.message },
+        { status: 400 }
+      )
+    }
+
+    const poolValue = Number(house.commission_pool_value)
+    const adminPartnerAmount = Number(adminPartnerRule.amount)
+    const totalAdminPartners = (activePartnerCount || 0) * adminPartnerAmount
+    const maxAffiliateAmount = poolValue - totalAdminPartners
+
+    if (maxAffiliateAmount < 0) {
+      return NextResponse.json(
+        { error: 'Pool da casa insuficiente para pagar os admin_partners.' },
+        { status: 400 }
+      )
+    }
+
+    if (amountNumber > maxAffiliateAmount) {
+      return NextResponse.json(
+        {
+          error: `A comissão do afiliado não pode passar de R$ ${maxAffiliateAmount.toFixed(2)} para essa casa.`,
+        },
         { status: 400 }
       )
     }

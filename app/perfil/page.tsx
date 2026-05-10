@@ -18,11 +18,18 @@ type UserRow = {
 type LinkRow = {
   id: string
   tracking_link: string
+  baseline_value: number | null
   house_id: string
-  houses: {
-    id: string
-    name: string
-  }[] | null
+  houses:
+    | {
+        id: string
+        name: string
+      }
+    | {
+        id: string
+        name: string
+      }[]
+    | null
 }
 
 export default function PerfilPage() {
@@ -78,7 +85,17 @@ export default function PerfilPage() {
 
     const { data: linksData } = await supabase
       .from('user_house_links')
-      .select('id, tracking_link, house_id, houses(id, name)')
+      .select(`
+        id,
+        tracking_link,
+        baseline_value,
+        active,
+        house_id,
+        houses:user_house_links_house_id_fkey (
+          id,
+          name
+        )
+      `)
       .eq('user_id', currentUser.id)
       .eq('active', true)
 
@@ -147,6 +164,20 @@ export default function PerfilPage() {
     setConfirmPassword('')
     setMessage('Senha alterada com sucesso.')
 }
+
+  function formatMoney(value?: number | null) {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(Number(value || 0))
+  }
+
+  const linkMeta: React.CSSProperties = {
+    margin: '6px 0 0',
+    color: '#bbf7d0',
+    fontSize: '13px',
+    fontWeight: 700,
+  }
 
   function formatRole(role: UserRole | null) {
     if (!role) return '-'
@@ -226,7 +257,19 @@ export default function PerfilPage() {
                   links.map((item) => (
                     <div key={item.id} style={linkCard}>
                       <div style={{ minWidth: 0 }}>
-                        <p style={linkHouse}>{item.houses?.[0]?.name || 'Casa sem nome'}</p>
+                        <p style={linkHouse}>
+                          {Array.isArray(item.houses)
+                            ? item.houses[0]?.name || 'Casa sem nome'
+                            : item.houses?.name || 'Casa sem nome'}
+                        </p>
+
+                        <p style={linkMeta}>
+                          Baseline:{' '}
+                          {item.baseline_value !== null && item.baseline_value !== undefined
+                            ? formatMoney(item.baseline_value)
+                            : 'não informada'}
+                        </p>
+
                         <p style={linkText}>{item.tracking_link}</p>
                       </div>
 

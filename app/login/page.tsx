@@ -111,7 +111,7 @@ export default function LoginPage() {
     <main style={pageBg}>
       <div style={loginCard}>
         <div style={{ marginBottom: '24px' }}>
-          <div style={loginLogoBox}>GA</div>
+          <div style={loginLogoBox}>AfiliaZap</div>
 
           <p style={eyebrow}>
             {mode === 'login' ? 'Acesso' : 'Cadastro'}
@@ -123,7 +123,7 @@ export default function LoginPage() {
 
           <p style={pageSubtitle}>
             {mode === 'login'
-              ? 'Acesse o painel de gestão de afiliados.'
+              ? 'Acesse o painel de AfiliaZap.'
               : 'Crie sua conta. O acesso será liberado após aprovação do administrador.'}
           </p>
         </div>

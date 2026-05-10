@@ -62,13 +62,25 @@ export async function POST(req: Request) {
       .eq('id', user_id)
 
     if (userError) {
-      return NextResponse.json({ error: userError.message }, { status: 400 })
+      const errorMessage =
+        userError.message?.includes('users_nome_unique_normalized') ||
+        userError.message?.includes('users_email_unique_normalized') ||
+        userError.message?.includes('users_afiliado_nome_unique_normalized') ||
+        userError.message?.includes('duplicate key value')
+          ? 'Já existe um usuário com esse nome, e-mail ou nome de afiliado.'
+          : userError.message
+
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
     }
 
     // 2. Inserir links (se existirem)
     if (Array.isArray(links) && links.length > 0) {
       for (const link of links) {
-        const { house_id, tracking_link } = link
+        const {
+          house_id,
+          tracking_link,
+          baseline_value
+        } = link
 
         if (!house_id || !tracking_link) continue
 
@@ -90,6 +102,12 @@ export async function POST(req: Request) {
             user_id,
             house_id,
             tracking_link,
+            baseline_value:
+              baseline_value === '' ||
+              baseline_value === null ||
+              baseline_value === undefined
+                ? null
+                : Number(baseline_value),
             active: true,
             created_by: currentUser.id
           })
