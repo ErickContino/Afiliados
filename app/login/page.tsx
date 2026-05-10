@@ -111,7 +111,11 @@ export default function LoginPage() {
     <main style={pageBg}>
       <div style={loginCard}>
         <div style={{ marginBottom: '24px' }}>
-          <div style={loginLogoBox}>AfiliaZap</div>
+          <div style={brandRow}>
+            <div style={loginLogoBox}>AZ</div>
+
+            <h1 style={brandTitle}>AfiliaZap</h1>
+          </div>
 
           <p style={eyebrow}>
             {mode === 'login' ? 'Acesso' : 'Cadastro'}
@@ -354,4 +358,19 @@ const messageStyle: React.CSSProperties = {
   color: '#bbf7d0',
   fontSize: '14px',
   lineHeight: 1.4,
+}
+
+const brandRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '14px',
+  marginBottom: '20px',
+}
+
+const brandTitle: React.CSSProperties = {
+  margin: 0,
+  color: '#f8fafc',
+  fontSize: '28px',
+  fontWeight: 800,
+  letterSpacing: '-0.04em',
 }
