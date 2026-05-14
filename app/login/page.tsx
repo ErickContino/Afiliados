@@ -114,7 +114,7 @@ export default function LoginPage() {
           <div style={brandRow}>
             <div style={loginLogoBox}>AZ</div>
 
-            <h1 style={brandTitle}>AfiliaZap</h1>
+            <h1 style={brandTitle}>AffiliaZap</h1>
           </div>
 
           <p style={eyebrow}>
@@ -127,7 +127,7 @@ export default function LoginPage() {
 
           <p style={pageSubtitle}>
             {mode === 'login'
-              ? 'Acesse o painel de AfiliaZap.'
+              ? 'Acesse o painel de AffiliaZap.'
               : 'Crie sua conta. O acesso será liberado após aprovação do administrador.'}
           </p>
         </div>

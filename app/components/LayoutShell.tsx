@@ -92,8 +92,8 @@ export default function LayoutShell({
 
             {!collapsed && (
               <div>
-                <h2 style={brandTitle}>AfiliaZap</h2>
-                <p style={brandSubtitle}>AfiliaZap</p>
+                <h2 style={brandTitle}>AffiliaZap</h2>
+                <p style={brandSubtitle}>AffiliaZap</p>
               </div>
             )}
           </div>

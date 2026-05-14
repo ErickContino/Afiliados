@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: 'AfiliaZap',
-  description: 'AfiliaZap',
+  title: 'AffiliaZap',
+  description: 'AffiliaZap',
 }
 
 export default function RootLayout({
