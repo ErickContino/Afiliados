@@ -1,41 +1,11 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-
-const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey)
-const supabasePublic = createClient(supabaseUrl, anonKey)
+import { getRequester, supabaseAdmin } from '@/lib/api-auth'
 
 export async function POST(req: Request) {
   try {
-    const authHeader = req.headers.get('authorization')
-    const token = authHeader?.replace('Bearer ', '')
-
-    if (!token) {
-      return NextResponse.json({ error: 'Token ausente.' }, { status: 401 })
-    }
-
-    const { data: authData, error: authError } = await supabasePublic.auth.getUser(token)
-
-    if (authError || !authData?.user) {
-      return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
-    }
-
-    const { data: user, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('id, role')
-      .eq('auth_id', authData.user.id)
-      .single()
-
-    if (userError || !user) {
-      return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 403 })
-    }
-
-    if (user.role !== 'admin_master') {
-      return NextResponse.json({ error: 'Apenas admin_master pode alterar casas.' }, { status: 403 })
-    }
+    const auth = await getRequester(req, ['admin_master'], 'Apenas admin_master pode alterar casas.')
+    if (!auth.ok) return auth.response
+    const { requester: user } = auth
 
     const body = await req.json()
 

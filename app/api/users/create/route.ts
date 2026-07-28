@@ -1,53 +1,10 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
-
-const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey)
-const supabasePublic = createClient(supabaseUrl, supabaseAnonKey)
+import { getRequester, supabaseAdmin } from '@/lib/api-auth'
 
 export async function POST(req: Request) {
   try {
-    const authHeader = req.headers.get('authorization')
-    const token = authHeader?.replace('Bearer ', '')
-
-    if (!token) {
-      return NextResponse.json(
-        { error: 'Token de autenticação ausente.' },
-        { status: 401 }
-      )
-    }
-
-    const { data: authData, error: authError } = await supabasePublic.auth.getUser(token)
-
-    if (authError || !authData.user) {
-      return NextResponse.json(
-        { error: 'Usuário não autenticado.' },
-        { status: 401 }
-      )
-    }
-
-    const { data: requester, error: requesterError } = await supabaseAdmin
-      .from('users')
-      .select('id, role')
-      .eq('auth_id', authData.user.id)
-      .single()
-
-    if (requesterError || !requester) {
-      return NextResponse.json(
-        { error: 'Usuário não encontrado na tabela users.' },
-        { status: 403 }
-      )
-    }
-
-    if (requester.role !== 'admin_master') {
-      return NextResponse.json(
-        { error: 'Apenas admin_master pode criar usuários.' },
-        { status: 403 }
-      )
-    }
+    const auth = await getRequester(req, ['admin_master'], 'Apenas admin_master pode criar usuários.')
+    if (!auth.ok) return auth.response
 
     const body = await req.json()
     const { nome, email, senha, role, parent_id, afiliado_nome } = body
@@ -83,6 +40,10 @@ export async function POST(req: Request) {
     })
 
     if (userError) {
+      // Reverte o usuário criado no Auth para não deixar uma conta órfã
+      // (sem linha em `users`) ocupando o e-mail e impedindo nova tentativa.
+      await supabaseAdmin.auth.admin.deleteUser(authUser.user.id)
+
       const errorMessage =
         userError.message?.includes('users_nome_unique_normalized') ||
         userError.message?.includes('users_email_unique_normalized') ||

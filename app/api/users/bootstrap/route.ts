@@ -1,18 +1,26 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
-
-const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey)
+import { supabaseAdmin, supabasePublic } from '@/lib/api-auth'
 
 export async function POST(req: Request) {
   try {
+    const authHeader = req.headers.get('authorization')
+    const token = authHeader?.replace('Bearer ', '')
+
+    if (!token) {
+      return NextResponse.json({ error: 'Token ausente' }, { status: 401 })
+    }
+
+    const { data: authData } = await supabasePublic.auth.getUser(token)
+
+    if (!authData?.user) {
+      return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
+    }
+
     const body = await req.json()
+    const { email } = body
+    const auth_id = authData.user.id
 
-    const { auth_id, email } = body
-
-    if (!auth_id || !email) {
+    if (!email) {
       return NextResponse.json({ error: 'Dados inválidos' }, { status: 400 })
     }
 

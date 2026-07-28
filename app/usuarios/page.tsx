@@ -3,6 +3,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import LayoutShell from '../components/LayoutShell'
+import { color, radius } from '@/lib/design-tokens'
+import {
+  Card,
+  Field,
+  Input,
+  Select,
+  Button,
+  Callout,
+  DataTable,
+  Column,
+  StatusBadge,
+  LoadingState,
+  AccessBlockedState,
+  useConfirmDialog,
+  useToast,
+} from '../components/ui'
+import { CheckCircle2, XCircle, AlertTriangle } from '../components/icons'
 
 type UserRole = 'admin_master' | 'admin_partner' | 'gerente' | 'afiliado'
 type UserStatus = 'pending' | 'active' | 'inactive'
@@ -80,6 +97,9 @@ const emptyCompleteForm: CompleteForm = {
 }
 
 export default function UsuariosPage() {
+  const toast = useToast()
+  const { confirm, dialog } = useConfirmDialog()
+
   const [users, setUsers] = useState<UserRow[]>([])
   const [houses, setHouses] = useState<HouseRow[]>([])
   const [links, setLinks] = useState<UserHouseLink[]>([])
@@ -91,7 +111,6 @@ export default function UsuariosPage() {
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
 
   const [selectedRole, setSelectedRole] = useState('')
   const [selectedManager, setSelectedManager] = useState('')
@@ -108,7 +127,6 @@ export default function UsuariosPage() {
 
   async function init() {
     setLoading(true)
-    setMessage('')
 
     const { data: authData } = await supabase.auth.getUser()
 
@@ -125,23 +143,15 @@ export default function UsuariosPage() {
 
     if (error || !userDb) {
       setLoading(false)
-      setMessage('Usuário autenticado não encontrado na tabela users.')
+      toast.error('Usuário autenticado não encontrado na tabela users.')
       return
     }
 
     const loggedUser = userDb as UserRow
 
-    setCurrentUser({
-      email: authData.user.email,
-      db: loggedUser,
-    })
+    setCurrentUser({ email: authData.user.email, db: loggedUser })
 
-    await Promise.all([
-      loadUsers(),
-      loadHouses(),
-      loadLinks(),
-      loadUnregisteredAffiliates(loggedUser),
-    ])
+    await Promise.all([loadUsers(), loadHouses(), loadLinks(), loadUnregisteredAffiliates(loggedUser)])
 
     setLoading(false)
   }
@@ -153,7 +163,7 @@ export default function UsuariosPage() {
       .order('email')
 
     if (error || !data) {
-      setMessage(`Erro ao carregar usuários: ${error?.message || 'erro desconhecido'}`)
+      toast.error(`Erro ao carregar usuários: ${error?.message || 'erro desconhecido'}`)
       return
     }
 
@@ -161,11 +171,7 @@ export default function UsuariosPage() {
   }
 
   async function loadHouses() {
-    const { data, error } = await supabase
-      .from('houses')
-      .select('id, name')
-      .eq('active', true)
-      .order('name')
+    const { data, error } = await supabase.from('houses').select('id, name').eq('active', true).order('name')
 
     if (error || !data) {
       setHouses([])
@@ -196,10 +202,7 @@ export default function UsuariosPage() {
       .eq('user_id', userId)
       .eq('active', true)
 
-    if (error || !data) {
-      return []
-    }
-
+    if (error || !data) return []
     return data as UserHouseLink[]
   }
 
@@ -216,7 +219,7 @@ export default function UsuariosPage() {
 
     if (error || !data) {
       setUnregisteredAffiliates([])
-      setMessage(`Erro ao carregar afiliados não cadastrados: ${error?.message || 'erro desconhecido'}`)
+      toast.error(`Erro ao carregar afiliados não cadastrados: ${error?.message || 'erro desconhecido'}`)
       return
     }
 
@@ -226,39 +229,33 @@ export default function UsuariosPage() {
   async function reloadAll() {
     if (!currentUser?.db) return
 
-    await Promise.all([
-      loadUsers(),
-      loadHouses(),
-      loadLinks(),
-      loadUnregisteredAffiliates(currentUser.db),
-    ])
+    await Promise.all([loadUsers(), loadHouses(), loadLinks(), loadUnregisteredAffiliates(currentUser.db)])
   }
 
   async function handleManualCreate(e: React.FormEvent) {
     e.preventDefault()
-    setMessage('')
 
     if (!currentUser?.db) return
 
     if (currentUser.db.role !== 'admin_master') {
-      setMessage('Apenas admin_master pode criar usuários.')
+      toast.error('Apenas admin_master pode criar usuários.')
       return
     }
 
     if (!manualForm.nome.trim() || !manualForm.email.trim() || !manualForm.senha.trim()) {
-      setMessage('Preencha nome, email e senha.')
+      toast.error('Preencha nome, email e senha.')
       return
     }
 
     if (!manualForm.afiliado_nome.trim()) {
-      setMessage('Defina o nome de match no CSV.')
+      toast.error('Defina o nome de match no CSV.')
       return
     }
 
     const parentId = manualForm.role === 'afiliado' ? manualForm.parent_id || null : null
 
     if (manualForm.role === 'afiliado' && !parentId) {
-      setMessage('Selecione um gerente responsável para o afiliado.')
+      toast.error('Selecione um gerente responsável para o afiliado.')
       return
     }
 
@@ -270,16 +267,13 @@ export default function UsuariosPage() {
 
       if (!token) {
         setSaving(false)
-        setMessage('Sessão inválida. Faça login novamente.')
+        toast.error('Sessão inválida. Faça login novamente.')
         return
       }
 
       const res = await fetch('/api/users/create', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           nome: manualForm.nome.trim(),
           email: manualForm.email.trim(),
@@ -291,48 +285,46 @@ export default function UsuariosPage() {
       })
 
       const data = await res.json()
-
       setSaving(false)
 
       if (!res.ok) {
-        setMessage(`Erro ao criar usuário: ${data.error || 'Erro desconhecido.'}`)
+        toast.error(`Erro ao criar usuário: ${data.error || 'Erro desconhecido.'}`)
         return
       }
 
-      setMessage('Usuário criado com sucesso.')
+      toast.success('Usuário criado com sucesso.')
       setManualForm(emptyManualForm)
       await reloadAll()
     } catch {
       setSaving(false)
-      setMessage('Erro inesperado ao criar usuário.')
+      toast.error('Erro inesperado ao criar usuário.')
     }
   }
 
   async function handleCompleteUser(e: React.FormEvent) {
     e.preventDefault()
-    setMessage('')
 
     if (!currentUser?.db) return
 
     if (currentUser.db.role !== 'admin_master') {
-      setMessage('Apenas admin_master pode completar cadastro.')
+      toast.error('Apenas admin_master pode completar cadastro.')
       return
     }
 
     if (!completeForm.user_id) {
-      setMessage('Selecione um usuário para completar ou editar.')
+      toast.error('Selecione um usuário para completar ou editar.')
       return
     }
 
     if (!completeForm.nome.trim() || !completeForm.role) {
-      setMessage('Preencha nome e role.')
+      toast.error('Preencha nome e role.')
       return
     }
 
     const parentId = completeForm.role === 'afiliado' ? completeForm.parent_id || null : null
 
     if (completeForm.role === 'afiliado' && !parentId) {
-      setMessage('Selecione um gerente responsável para o afiliado.')
+      toast.error('Selecione um gerente responsável para o afiliado.')
       return
     }
 
@@ -357,16 +349,13 @@ export default function UsuariosPage() {
 
       if (!token) {
         setSaving(false)
-        setMessage('Sessão inválida. Faça login novamente.')
+        toast.error('Sessão inválida. Faça login novamente.')
         return
       }
 
       const res = await fetch('/api/users/complete', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           user_id: completeForm.user_id,
           nome: completeForm.nome.trim(),
@@ -378,43 +367,41 @@ export default function UsuariosPage() {
       })
 
       const data = await res.json()
-
       setSaving(false)
 
       if (!res.ok) {
-        setMessage(`Erro ao salvar cadastro: ${data.error || 'Erro desconhecido.'}`)
+        toast.error(`Erro ao salvar cadastro: ${data.error || 'Erro desconhecido.'}`)
         return
       }
 
-      setMessage('Cadastro salvo com sucesso.')
+      toast.success('Cadastro salvo com sucesso.')
       setCompleteForm(emptyCompleteForm)
       setLinkForm({})
       setBaselineForm({})
       await reloadAll()
     } catch {
       setSaving(false)
-      setMessage('Erro inesperado ao salvar cadastro.')
+      toast.error('Erro inesperado ao salvar cadastro.')
     }
   }
 
   async function handleAssignAffiliate(e: React.FormEvent) {
     e.preventDefault()
-    setMessage('')
 
     if (!currentUser?.db) return
 
     if (currentUser.db.role !== 'admin_master') {
-      setMessage('Apenas admin_master pode atribuir afiliados.')
+      toast.error('Apenas admin_master pode atribuir afiliados.')
       return
     }
 
     if (!assigningAffiliate) {
-      setMessage('Selecione um afiliado do CSV.')
+      toast.error('Selecione um afiliado do CSV.')
       return
     }
 
     if (!selectedAssignUserId) {
-      setMessage('Selecione um usuário para atribuir.')
+      toast.error('Selecione um usuário para atribuir.')
       return
     }
 
@@ -426,28 +413,21 @@ export default function UsuariosPage() {
 
       if (!token) {
         setSaving(false)
-        setMessage('Sessão inválida. Faça login novamente.')
+        toast.error('Sessão inválida. Faça login novamente.')
         return
       }
 
       const res = await fetch('/api/users/assign-affiliate', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          user_id: selectedAssignUserId,
-          afiliado_nome: assigningAffiliate.afiliado,
-        }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ user_id: selectedAssignUserId, afiliado_nome: assigningAffiliate.afiliado }),
       })
 
       const data = await res.json()
-
       setSaving(false)
 
       if (!res.ok) {
-        setMessage(
+        toast.error(
           data.error === 'Afiliado já vinculado a outro usuário'
             ? 'Este afiliado já está vinculado a outro usuário.'
             : `Erro ao atribuir afiliado: ${data.error || 'Erro desconhecido.'}`
@@ -455,38 +435,41 @@ export default function UsuariosPage() {
         return
       }
 
-      setMessage('Afiliado vinculado com sucesso.')
+      toast.success('Afiliado vinculado com sucesso.')
       setAssigningAffiliate(null)
       setSelectedAssignUserId('')
       await reloadAll()
     } catch {
       setSaving(false)
-      setMessage('Erro inesperado ao atribuir afiliado.')
+      toast.error('Erro inesperado ao atribuir afiliado.')
     }
   }
 
-  async function handleDeactivate(userId: string) {
+  async function handleDeactivate(user: UserRow) {
+    const confirmed = await confirm({
+      title: 'Desativar usuário',
+      description: `Tem certeza que deseja desativar ${user.nome || user.email}? O acesso dele será bloqueado até ser reativado.`,
+      confirmLabel: 'Desativar',
+      danger: true,
+    })
+    if (!confirmed) return
+
     const { data: sessionData } = await supabase.auth.getSession()
 
     const res = await fetch('/api/users/deactivate', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${sessionData.session?.access_token}`,
-      },
-      body: JSON.stringify({
-        user_id: userId,
-      }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionData.session?.access_token}` },
+      body: JSON.stringify({ user_id: user.id }),
     })
 
     const data = await res.json()
 
     if (!res.ok) {
-      setMessage(data.error || 'Erro ao desativar usuário.')
+      toast.error(data.error || 'Erro ao desativar usuário.')
       return
     }
 
-    setMessage('Usuário desativado com sucesso.')
+    toast.success('Usuário desativado com sucesso.')
     await reloadAll()
   }
 
@@ -495,23 +478,18 @@ export default function UsuariosPage() {
 
     const res = await fetch('/api/users/reactivate', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${sessionData.session?.access_token}`,
-      },
-      body: JSON.stringify({
-        user_id: userId,
-      }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionData.session?.access_token}` },
+      body: JSON.stringify({ user_id: userId }),
     })
 
     const data = await res.json()
 
     if (!res.ok) {
-      setMessage(data.error || 'Erro ao reativar usuário.')
+      toast.error(data.error || 'Erro ao reativar usuário.')
       return
     }
 
-    setMessage('Usuário reativado com sucesso.')
+    toast.success('Usuário reativado com sucesso.')
     await reloadAll()
   }
 
@@ -541,48 +519,32 @@ export default function UsuariosPage() {
 
     setLinkForm(nextLinks)
     setBaselineForm(nextBaselines)
-    setMessage(`Editando cadastro de ${user.nome || user.email}.`)
+    toast.success(`Editando cadastro de ${user.nome || user.email}.`)
   }
 
   function resetCompleteForm() {
     setCompleteForm(emptyCompleteForm)
     setLinkForm({})
     setBaselineForm({})
-    setMessage('')
   }
 
   const isAdminMaster = currentUser?.db?.role === 'admin_master'
   const canViewPage = isAdminMaster
   const canCreateUser = isAdminMaster
 
-  const pendingUsers = useMemo(() => {
-    return users.filter((u) => u.status === 'pending')
-  }, [users])
-
-  const activeUsers = useMemo(() => {
-    return users.filter((u) => u.status === 'active')
-  }, [users])
-
-  const inactiveUsers = useMemo(() => {
-    return users.filter((u) => u.status === 'inactive')
-  }, [users])
-
-  const managerOptions = useMemo(() => {
-    return users.filter((u) => u.role === 'gerente' && u.status === 'active')
-  }, [users])
+  const pendingUsers = useMemo(() => users.filter((u) => u.status === 'pending'), [users])
+  const activeUsers = useMemo(() => users.filter((u) => u.status === 'active'), [users])
+  const inactiveUsers = useMemo(() => users.filter((u) => u.status === 'inactive'), [users])
+  const managerOptions = useMemo(() => users.filter((u) => u.role === 'gerente' && u.status === 'active'), [users])
 
   const assignUserOptions = useMemo(() => {
-    return [...pendingUsers, ...activeUsers]
-      .sort((a, b) => {
-        const aHasAffiliate = Boolean(a.afiliado_nome)
-        const bHasAffiliate = Boolean(b.afiliado_nome)
+    return [...pendingUsers, ...activeUsers].sort((a, b) => {
+      const aHasAffiliate = Boolean(a.afiliado_nome)
+      const bHasAffiliate = Boolean(b.afiliado_nome)
 
-        if (aHasAffiliate !== bHasAffiliate) {
-          return aHasAffiliate ? 1 : -1
-        }
-
-        return (a.nome || a.email || '').localeCompare(b.nome || b.email || '')
-      })
+      if (aHasAffiliate !== bHasAffiliate) return aHasAffiliate ? 1 : -1
+      return (a.nome || a.email || '').localeCompare(b.nome || b.email || '')
+    })
   }, [pendingUsers, activeUsers])
 
   const filteredActiveUsers = useMemo(() => {
@@ -599,6 +561,7 @@ export default function UsuariosPage() {
 
       return matchesRole && matchesManager && matchesLinks
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeUsers, selectedRole, selectedManager, selectedLinkStatus, links, houses])
 
   function getParentName(parentId?: string | null) {
@@ -613,475 +576,288 @@ export default function UsuariosPage() {
 
   function getMissingLinksCount(userId: string) {
     return houses.filter((house) => {
-      return !links.some(
-        (link) =>
-          link.user_id === userId &&
-          link.house_id === house.id &&
-          link.active &&
-          link.tracking_link
-      )
+      return !links.some((link) => link.user_id === userId && link.house_id === house.id && link.active && link.tracking_link)
     }).length
   }
-  
+
   function formatRole(role: UserRole | null) {
     if (!role) return '-'
-
-    const map = {
-      admin_master: 'Admin Master',
-      admin_partner: 'Admin Partner',
-      gerente: 'Gerente',
-      afiliado: 'Afiliado',
-    }
-
+    const map = { admin_master: 'Admin Master', admin_partner: 'Admin Partner', gerente: 'Gerente', afiliado: 'Afiliado' }
     return map[role] || role
   }
 
-  function formatStatus(status?: 'pending' | 'active' | 'inactive') {
-    const map = {
-      pending: 'Pendente',
-      active: 'Ativo',
-      inactive: 'Inativo',
-    }
-
+  function formatStatus(status?: UserStatus) {
+    const map = { pending: 'Pendente', active: 'Ativo', inactive: 'Inativo' }
     return map[status || 'pending']
   }
 
-  function getLinkSummary(userId: string) {
+  function LinkSummary({ userId }: { userId: string }) {
     const missing = getMissingLinksCount(userId)
 
-    if (houses.length === 0) return 'Sem casas ativas'
-    if (missing === 0) return '✔ Completo'
+    if (houses.length === 0) return <span style={{ color: color.textSecondary }}>Sem casas ativas</span>
+    if (missing === 0)
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: color.greenSofter }}>
+          <CheckCircle2 size={14} /> Completo
+        </span>
+      )
 
-    return `⚠️ ${missing} casa(s) sem link`
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: color.amberText }}>
+        <AlertTriangle size={14} /> {missing} casa(s) sem link
+      </span>
+    )
   }
 
   if (loading) {
-    return (
-      <main style={pageBg}>
-        <div style={centerBox}>
-          <p style={{ color: '#bbf7d0', fontSize: '16px' }}>Carregando...</p>
-        </div>
-      </main>
-    )
+    return <LoadingState fullPage label="Carregando usuários..." />
   }
 
   if (!currentUser?.db) {
     return (
-      <main style={pageBg}>
-        <div style={centerBox}>
-          <h1 style={{ color: '#f8fafc', marginBottom: '12px' }}>Acesso indisponível</h1>
-          <p style={{ color: '#94a3b8' }}>Faça login novamente para acessar esta página.</p>
-        </div>
-      </main>
+      <div style={{ minHeight: '100vh', background: color.bgApp, display: 'flex', alignItems: 'center', justifyContent: 'center', color: color.textSecondary }}>
+        Faça login novamente para acessar esta página.
+      </div>
     )
   }
 
   if (currentUser.db.status === 'pending') {
-    return (
-      <main style={pageBg}>
-        <div style={centerBox}>
-          <section style={blockedCard}>
-            <h1 style={blockedTitle}>Cadastro recebido</h1>
-            <p style={blockedText}>
-              Seu cadastro está aguardando liberação pelo administrador.
-            </p>
-          </section>
-        </div>
-      </main>
-    )
+    return <AccessBlockedState kind="pending" fullPage />
   }
 
   if (!canViewPage) {
     return (
-      <LayoutShell
-        active="usuarios"
-        user={{
-          nome: currentUser.db.nome || '',
-          email: currentUser.email || '',
-          role: currentUser.db.role || '',
-        }}
-      >
-        <section style={blockedCard}>
-          <h1 style={blockedTitle}>Acesso restrito</h1>
-          <p style={blockedText}>Esta tela está disponível apenas para admin master.</p>
-        </section>
+      <LayoutShell active="usuarios" user={{ nome: currentUser.db.nome || '', email: currentUser.email || '', role: currentUser.db.role || '' }}>
+        <AccessBlockedState kind="restricted" description="Esta tela está disponível apenas para admin master." />
       </LayoutShell>
     )
   }
 
+  const pendingColumns: Column<UserRow>[] = [
+    { key: 'nome', header: 'Nome', render: (u) => u.nome || '-' },
+    { key: 'email', header: 'Email', render: (u) => u.email || '-' },
+    { key: 'status', header: 'Status', render: (u) => <StatusBadge status={u.status} label={formatStatus(u.status)} /> },
+    {
+      key: 'action',
+      header: 'Ação',
+      render: (u) => (
+        <Button variant="secondary" size="sm" onClick={() => startCompleteUser(u)}>
+          Completar cadastro
+        </Button>
+      ),
+    },
+  ]
+
+  const unregisteredColumns: Column<UnregisteredAffiliate>[] = [
+    { key: 'nome', header: 'Nome no CSV', render: (a) => a.afiliado },
+    {
+      key: 'status',
+      header: 'Status',
+      render: () => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: color.redText }}>
+          <XCircle size={14} /> Não vinculado
+        </span>
+      ),
+    },
+    { key: 'qtd', header: 'Conversões', render: (a) => a.qtd_conversoes },
+    { key: 'primeira', header: 'Primeira', render: (a) => formatDate(a.primeira_conversao) },
+    { key: 'ultima', header: 'Última', render: (a) => formatDate(a.ultima_conversao) },
+    { key: 'casas', header: 'Casas', render: (a) => a.casas || '-' },
+    {
+      key: 'action',
+      header: 'Ação',
+      render: (a) => (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setAssigningAffiliate(a)
+            setSelectedAssignUserId('')
+          }}
+        >
+          Atribuir usuário
+        </Button>
+      ),
+    },
+  ]
+
+  const activeColumns: Column<UserRow>[] = [
+    { key: 'nome', header: 'Nome', render: (u) => u.nome || '-' },
+    { key: 'csv', header: 'Nome CSV', render: (u) => u.afiliado_nome || '-' },
+    { key: 'email', header: 'Email', render: (u) => u.email || '-' },
+    { key: 'role', header: 'Role', render: (u) => formatRole(u.role) },
+    { key: 'status', header: 'Status', render: (u) => <StatusBadge status={u.status} label={formatStatus(u.status)} /> },
+    { key: 'manager', header: 'Gerente', render: (u) => getParentName(u.parent_id) },
+    { key: 'links', header: 'Links', render: (u) => <LinkSummary userId={u.id} /> },
+    {
+      key: 'actions',
+      header: 'Ação',
+      render: (u) => (
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <Button variant="secondary" size="sm" onClick={() => startCompleteUser(u)}>
+            Editar cadastro
+          </Button>
+          {currentUser?.db?.role === 'admin_master' && u.role !== 'admin_master' && (
+            <Button variant="danger" size="sm" onClick={() => handleDeactivate(u)}>
+              Desativar
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ]
+
+  const inactiveColumns: Column<UserRow>[] = [
+    { key: 'nome', header: 'Nome', render: (u) => u.nome || '-' },
+    { key: 'email', header: 'Email', render: (u) => u.email || '-' },
+    { key: 'role', header: 'Role', render: (u) => formatRole(u.role) },
+    { key: 'status', header: 'Status', render: (u) => <StatusBadge status={u.status} label={formatStatus(u.status)} /> },
+    {
+      key: 'action',
+      header: 'Ações',
+      render: (u) => (
+        <Button size="sm" onClick={() => handleReactivate(u.id)}>
+          Reativar
+        </Button>
+      ),
+    },
+  ]
+
   return (
-    <LayoutShell
-      active="usuarios"
-      user={{
-        nome: currentUser.db.nome || '',
-        email: currentUser.email || '',
-        role: currentUser.db.role || '',
-      }}
-    >
+    <LayoutShell active="usuarios" user={{ nome: currentUser.db.nome || '', email: currentUser.email || '', role: currentUser.db.role || '' }}>
+      {dialog}
       <div style={{ maxWidth: '1500px', margin: '0 auto' }}>
-        <header style={headerCard}>
-          <div>
-            <p style={eyebrow}>Operação</p>
-            <h1 style={pageTitle}>Usuários</h1>
-            <p style={pageSubtitle}>
-              Gerencie cadastros pendentes, usuários ativos, hierarquia e links por casa.
-            </p>
-          </div>
-        </header>
+        <Card variant="header" style={{ marginBottom: '24px' }}>
+          <p style={eyebrowStyle}>Operação</p>
+          <h1 style={{ margin: '10px 0 8px', fontSize: '34px', fontWeight: 800, letterSpacing: '-0.04em' }}>Usuários</h1>
+          <p style={{ margin: 0, color: color.textSecondary, fontSize: '15px' }}>
+            Gerencie cadastros pendentes, usuários ativos, hierarquia e links por casa.
+          </p>
+        </Card>
 
-        <section style={gridSection}>
-          <div style={mainColumn}>
-            <section style={panelCard}>
-              <div style={panelHeader}>
-                <div>
-                  <h2 style={panelTitle}>Cadastros pendentes</h2>
-                  <p style={panelSubtitle}>
-                    {pendingUsers.length} usuário(s) aguardando liberação.
-                  </p>
-                </div>
-              </div>
+        <section className="grid grid-cols-1 xl:grid-cols-[1.55fr_0.95fr] gap-6 items-start">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            <Card>
+              <h2 style={panelTitleStyle}>Cadastros pendentes</h2>
+              <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>{pendingUsers.length} usuário(s) aguardando liberação.</p>
+              <DataTable columns={pendingColumns} data={pendingUsers} rowKey={(u) => u.id} emptyMessage="Nenhum cadastro pendente." />
+            </Card>
 
-              <div style={{ overflowX: 'auto' }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr style={theadRow}>
-                      <Th>Nome</Th>
-                      <Th>Email</Th>
-                      <Th>Status</Th>
-                      <Th>Ação</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingUsers.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} style={emptyStateTd}>
-                          Nenhum cadastro pendente.
-                        </td>
-                      </tr>
-                    ) : (
-                      pendingUsers.map((u) => (
-                        <tr key={u.id} style={tbodyRow}>
-                          <Td>{u.nome || '-'}</Td>
-                          <Td>{u.email || '-'}</Td>
-                          <Td>{formatStatus(u.status)}</Td>
-                          <Td>
-                            <button
-                              type="button"
-                              style={secondaryButton}
-                              onClick={() => startCompleteUser(u)}
-                            >
-                              Completar cadastro
-                            </button>
-                          </Td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+            <Card>
+              <h2 style={panelTitleStyle}>Afiliados detectados no CSV sem usuário</h2>
+              <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>
+                Nomes encontrados em conversions.afiliado sem match em users.afiliado_nome.
+              </p>
+              <DataTable
+                columns={unregisteredColumns}
+                data={unregisteredAffiliates}
+                rowKey={(a) => a.afiliado}
+                emptyMessage="Nenhum afiliado sem usuário encontrado."
+              />
+            </Card>
 
-            <section style={panelCard}>
-              <div style={panelHeader}>
-                <div>
-                  <h2 style={panelTitle}>Afiliados detectados no CSV sem usuário</h2>
-                  <p style={panelSubtitle}>
-                    Nomes encontrados em conversions.afiliado sem match em users.afiliado_nome.
-                  </p>
-                </div>
-              </div>
+            <Card>
+              <h2 style={panelTitleStyle}>Filtros</h2>
+              <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>Refine a listagem de usuários ativos.</p>
 
-              <div style={{ overflowX: 'auto' }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr style={theadRow}>
-                      <Th>Nome no CSV</Th>
-                      <Th>Status</Th>
-                      <Th>Conversões</Th>
-                      <Th>Primeira</Th>
-                      <Th>Última</Th>
-                      <Th>Casas</Th>
-                      <Th>Ação</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {unregisteredAffiliates.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} style={emptyStateTd}>
-                          Nenhum afiliado sem usuário encontrado.
-                        </td>
-                      </tr>
-                    ) : (
-                      unregisteredAffiliates.map((affiliate) => (
-                        <tr key={affiliate.afiliado} style={tbodyRow}>
-                          <Td>{affiliate.afiliado}</Td>
-                          <Td>❌ Não vinculado</Td>
-                          <Td>{affiliate.qtd_conversoes}</Td>
-                          <Td>{formatDate(affiliate.primeira_conversao)}</Td>
-                          <Td>{formatDate(affiliate.ultima_conversao)}</Td>
-                          <Td>{affiliate.casas || '-'}</Td>
-                          <Td>
-                            <button
-                              type="button"
-                              style={secondaryButton}
-                              onClick={() => {
-                                setAssigningAffiliate(affiliate)
-                                setSelectedAssignUserId('')
-                                setMessage(`Atribuindo ${affiliate.afiliado} a um usuário existente.`)
-                              }}
-                            >
-                              Atribuir usuário
-                            </button>
-                          </Td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section style={panelCard}>
-              <div style={panelHeader}>
-                <div>
-                  <h2 style={panelTitle}>Filtros</h2>
-                  <p style={panelSubtitle}>Refine a listagem de usuários ativos.</p>
-                </div>
-              </div>
-
-              <div style={filtersGrid}>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                 <Field label="Role">
-                  <select
-                    value={selectedRole}
-                    onChange={(e) => setSelectedRole(e.target.value)}
-                    style={inputStyle}
-                  >
+                  <Select value={selectedRole} onChange={(e) => setSelectedRole(e.target.value)}>
                     <option value="">Todos</option>
                     <option value="admin_master">Admin master</option>
                     <option value="admin_partner">Admin partner</option>
                     <option value="gerente">Gerente</option>
                     <option value="afiliado">Afiliado</option>
-                  </select>
+                  </Select>
                 </Field>
 
                 <Field label="Gerente">
-                  <select
-                    value={selectedManager}
-                    onChange={(e) => setSelectedManager(e.target.value)}
-                    style={inputStyle}
-                  >
+                  <Select value={selectedManager} onChange={(e) => setSelectedManager(e.target.value)}>
                     <option value="">Todos</option>
                     {managerOptions.map((manager) => (
                       <option key={manager.id} value={manager.id}>
                         {manager.nome}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
 
                 <Field label="Links">
-                  <select
-                    value={selectedLinkStatus}
-                    onChange={(e) => setSelectedLinkStatus(e.target.value)}
-                    style={inputStyle}
-                  >
+                  <Select value={selectedLinkStatus} onChange={(e) => setSelectedLinkStatus(e.target.value)}>
                     <option value="">Todos</option>
                     <option value="com_link">Links completos</option>
                     <option value="sem_link">Com link faltando</option>
-                  </select>
+                  </Select>
                 </Field>
               </div>
-            </section>
+            </Card>
 
-            <section style={panelCard}>
-              <div style={panelHeader}>
-                <div>
-                  <h2 style={panelTitle}>Usuários ativos</h2>
-                  <p style={panelSubtitle}>
-                    {filteredActiveUsers.length} registro(s) encontrado(s)
-                  </p>
-                </div>
-              </div>
-
-              <div style={{ overflowX: 'auto' }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr style={theadRow}>
-                      <Th>Nome</Th>
-                      <Th>Nome CSV</Th>
-                      <Th>Email</Th>
-                      <Th>Role</Th>
-                      <Th>Status</Th>
-                      <Th>Gerente</Th>
-                      <Th>Links</Th>
-                      <Th>Ação</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredActiveUsers.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} style={emptyStateTd}>
-                          Nenhum usuário ativo encontrado.
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredActiveUsers.map((u) => (
-                        <tr key={u.id} style={tbodyRow}>
-                          <Td>{u.nome || '-'}</Td>
-                          <Td>{u.afiliado_nome || '-'}</Td>
-                          <Td>{u.email || '-'}</Td>
-                          <Td>{formatRole(u.role)}</Td>
-                          <Td>{formatStatus(u.status)}</Td>
-                          <Td>{getParentName(u.parent_id)}</Td>
-                          <Td>{getLinkSummary(u.id)}</Td>
-                          <Td>
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              <button
-                                type="button"
-                                style={secondaryButton}
-                                onClick={() => startCompleteUser(u)}
-                              >
-                                Editar cadastro
-                              </button>
-
-                              {currentUser?.db?.role === 'admin_master' &&
-                                u.role !== 'admin_master' && (
-                                  <button
-                                    type="button"
-                                    style={dangerButton}
-                                    onClick={() => handleDeactivate(u.id)}
-                                  >
-                                    Desativar
-                                  </button>
-                                )}
-                            </div>
-                          </Td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+            <Card>
+              <h2 style={panelTitleStyle}>Usuários ativos</h2>
+              <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>{filteredActiveUsers.length} registro(s) encontrado(s)</p>
+              <DataTable columns={activeColumns} data={filteredActiveUsers} rowKey={(u) => u.id} emptyMessage="Nenhum usuário ativo encontrado." />
+            </Card>
 
             {inactiveUsers.length > 0 && (
-              <section style={panelCard}>
-                <div style={panelHeader}>
-                  <div>
-                    <h2 style={panelTitle}>Usuários inativos</h2>
-                    <p style={panelSubtitle}>{inactiveUsers.length} registro(s)</p>
-                  </div>
-                </div>
-
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={tableStyle}>
-                    <thead>
-                      <tr style={theadRow}>
-                        <Th>Nome</Th>
-                        <Th>Email</Th>
-                        <Th>Role</Th>
-                        <Th>Status</Th>
-                        <Th>Ações</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {inactiveUsers.map((u) => (
-                        <tr key={u.id} style={tbodyRow}>
-                          <Td>{u.nome || '-'}</Td>
-                          <Td>{u.email || '-'}</Td>
-                          <Td>{formatRole(u.role)}</Td>
-                          <Td>{formatStatus(u.status)}</Td>
-                          <Td>
-                            <button
-                              type="button"
-                              style={primaryButton}
-                              onClick={() => handleReactivate(u.id)}
-                            >
-                              Reativar
-                            </button>
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
+              <Card>
+                <h2 style={panelTitleStyle}>Usuários inativos</h2>
+                <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>{inactiveUsers.length} registro(s)</p>
+                <DataTable columns={inactiveColumns} data={inactiveUsers} rowKey={(u) => u.id} />
+              </Card>
             )}
           </div>
 
-          <aside style={sideColumn}>
+          <aside style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {assigningAffiliate && (
-              <section style={panelCard}>
-                <div style={panelHeader}>
-                  <div>
-                    <h2 style={panelTitle}>Atribuir afiliado do CSV</h2>
-                    <p style={panelSubtitle}>
-                      Vincule <b>{assigningAffiliate.afiliado}</b> a um usuário existente.
-                    </p>
-                  </div>
-                </div>
+              <Card>
+                <h2 style={panelTitleStyle}>Atribuir afiliado do CSV</h2>
+                <p style={panelSubtitleStyle}>
+                  Vincule <b>{assigningAffiliate.afiliado}</b> a um usuário existente.
+                </p>
 
-                <form onSubmit={handleAssignAffiliate} style={formStack}>
+                <form onSubmit={handleAssignAffiliate} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '18px' }}>
                   <Field label="Usuário">
-                    <select
-                      value={selectedAssignUserId}
-                      onChange={(e) => setSelectedAssignUserId(e.target.value)}
-                      style={inputStyle}
-                    >
+                    <Select value={selectedAssignUserId} onChange={(e) => setSelectedAssignUserId(e.target.value)}>
                       <option value="">Selecione</option>
-
                       {assignUserOptions.map((u) => (
                         <option key={u.id} value={u.id}>
-                          {u.nome || u.email} — {u.afiliado_nome
-                            ? `já vinculado: ${u.afiliado_nome}`
-                            : 'sem vínculo'}
+                          {u.nome || u.email} — {u.afiliado_nome ? `já vinculado: ${u.afiliado_nome}` : 'sem vínculo'}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </Field>
 
-                  <div style={warningBox}>
-                    Esta ação irá definir o match CSV deste usuário como: {assigningAffiliate.afiliado}
-                  </div>
+                  <Callout variant="warning">Esta ação irá definir o match CSV deste usuário como: {assigningAffiliate.afiliado}</Callout>
 
-                  <div style={formActions}>
-                    <button type="submit" style={primaryButton} disabled={saving}>
-                      {saving ? 'Atribuindo...' : 'Confirmar atribuição'}
-                    </button>
-
-                    <button
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <Button type="submit" loading={saving}>
+                      Confirmar atribuição
+                    </Button>
+                    <Button
                       type="button"
-                      style={ghostButton}
+                      variant="ghost"
                       onClick={() => {
                         setAssigningAffiliate(null)
                         setSelectedAssignUserId('')
                       }}
                     >
                       Cancelar
-                    </button>
+                    </Button>
                   </div>
                 </form>
-              </section>
+              </Card>
             )}
-            <section style={panelCard}>
-              <div style={panelHeader}>
-                <div>
-                  <h2 style={panelTitle}>
-                    {completeForm.user_id ? 'Completar / editar cadastro' : 'Completar cadastro'}
-                  </h2>
-                  <p style={panelSubtitle}>
-                    Use para liberar pendentes, editar hierarquia e atualizar links por casa.
-                  </p>
-                </div>
-              </div>
 
-              <form onSubmit={handleCompleteUser} style={formStack}>
+            <Card>
+              <h2 style={panelTitleStyle}>{completeForm.user_id ? 'Completar / editar cadastro' : 'Completar cadastro'}</h2>
+              <p style={panelSubtitleStyle}>Use para liberar pendentes, editar hierarquia e atualizar links por casa.</p>
+
+              <form onSubmit={handleCompleteUser} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '18px' }}>
                 <Field label="Usuário">
-                  <select
+                  <Select
                     value={completeForm.user_id}
                     onChange={(e) => {
                       const selected = users.find((u) => u.id === e.target.value)
-
                       if (selected) {
                         startCompleteUser(selected)
                       } else {
@@ -1090,7 +866,6 @@ export default function UsuariosPage() {
                         setBaselineForm({})
                       }
                     }}
-                    style={inputStyle}
                   >
                     <option value="">Selecione</option>
                     {[...pendingUsers, ...activeUsers].map((u) => (
@@ -1098,114 +873,95 @@ export default function UsuariosPage() {
                         {u.nome || u.email} — {u.email}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
 
                 <Field label="Nome">
-                  <input
-                    type="text"
-                    value={completeForm.nome}
-                    onChange={(e) =>
-                      setCompleteForm((prev) => ({ ...prev, nome: e.target.value }))
-                    }
-                    style={inputStyle}
-                  />
+                  <Input type="text" value={completeForm.nome} onChange={(e) => setCompleteForm((prev) => ({ ...prev, nome: e.target.value }))} />
                 </Field>
 
                 <Field label="Nome de match no CSV">
-                  <input
+                  <Input
                     type="text"
                     value={completeForm.afiliado_nome}
-                    onChange={(e) =>
-                      setCompleteForm((prev) => ({
-                        ...prev,
-                        afiliado_nome: e.target.value,
-                      }))
-                    }
+                    onChange={(e) => setCompleteForm((prev) => ({ ...prev, afiliado_nome: e.target.value }))}
                     placeholder="Precisa bater com conversions.afiliado"
-                    style={inputStyle}
                   />
                 </Field>
 
                 <Field label="Role">
-                  <select
+                  <Select
                     value={completeForm.role}
                     onChange={(e) => {
                       const nextRole = e.target.value as UserRole
-
-                      setCompleteForm((prev) => ({
-                        ...prev,
-                        role: nextRole,
-                        parent_id: nextRole === 'afiliado' ? prev.parent_id : '',
-                      }))
+                      setCompleteForm((prev) => ({ ...prev, role: nextRole, parent_id: nextRole === 'afiliado' ? prev.parent_id : '' }))
                     }}
-                    style={inputStyle}
                   >
                     <option value="afiliado">Afiliado</option>
                     <option value="gerente">Gerente</option>
                     <option value="admin_partner">Admin partner</option>
-                  </select>
+                  </Select>
                 </Field>
 
                 {completeForm.role === 'afiliado' && (
                   <Field label="Gerente responsável">
-                    <select
-                      value={completeForm.parent_id}
-                      onChange={(e) =>
-                        setCompleteForm((prev) => ({
-                          ...prev,
-                          parent_id: e.target.value,
-                        }))
-                      }
-                      style={inputStyle}
-                    >
+                    <Select value={completeForm.parent_id} onChange={(e) => setCompleteForm((prev) => ({ ...prev, parent_id: e.target.value }))}>
                       <option value="">Selecione</option>
                       {managerOptions.map((manager) => (
                         <option key={manager.id} value={manager.id}>
                           {manager.nome}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </Field>
                 )}
 
-                <section style={subPanel}>
-                  <h3 style={subPanelTitle}>Links por casa</h3>
+                <section
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px',
+                    padding: '16px',
+                    borderRadius: radius.lg,
+                    border: '1px solid rgba(34,197,94,0.1)',
+                    background: 'rgba(34,197,94,0.04)',
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: color.greenSofter }}>Links por casa</h3>
 
                   {houses.length === 0 ? (
-                    <p style={panelSubtitle}>Nenhuma casa ativa encontrada.</p>
+                    <p style={panelSubtitleStyle}>Nenhuma casa ativa encontrada.</p>
                   ) : (
                     houses.map((house) => (
-                      <div key={house.id} style={linkEditCard}>
+                      <div
+                        key={house.id}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px',
+                          padding: '14px',
+                          borderRadius: radius.md,
+                          border: '1px solid rgba(34,197,94,0.1)',
+                          background: 'rgba(2, 6, 23, 0.45)',
+                        }}
+                      >
                         <Field label={`${house.name} — Tracking link`}>
-                          <input
+                          <Input
                             type="text"
                             value={linkForm[house.id] || ''}
-                            onChange={(e) =>
-                              setLinkForm((prev) => ({
-                                ...prev,
-                                [house.id]: e.target.value,
-                              }))
-                            }
+                            onChange={(e) => setLinkForm((prev) => ({ ...prev, [house.id]: e.target.value }))}
                             placeholder="Tracking link"
-                            style={inputStyle}
                           />
                         </Field>
 
                         <Field label="Baseline">
-                          <input
+                          <Input
                             type="number"
                             step="0.01"
                             min="0"
                             value={baselineForm[house.id] || ''}
-                            onChange={(e) =>
-                              setBaselineForm((prev) => ({
-                                ...prev,
-                                [house.id]: e.target.value,
-                              }))
-                            }
+                            onChange={(e) => setBaselineForm((prev) => ({ ...prev, [house.id]: e.target.value }))}
                             placeholder="Ex: 50"
-                            style={inputStyle}
                           />
                         </Field>
                       </div>
@@ -1213,143 +969,96 @@ export default function UsuariosPage() {
                   )}
                 </section>
 
-                {completeForm.user_id &&
-                  Object.values(linkForm).every((value) => !value.trim()) && (
-                    <div style={warningBox}>
-                      Este usuário ainda não possui links cadastrados.
-                    </div>
+                {completeForm.user_id && Object.values(linkForm).every((value) => !value.trim()) && (
+                  <Callout variant="warning">Este usuário ainda não possui links cadastrados.</Callout>
                 )}
 
-                <div style={formActions}>
-                  <button type="submit" style={primaryButton} disabled={saving}>
-                    {saving ? 'Salvando...' : 'Salvar cadastro'}
-                  </button>
-
-                  <button type="button" style={ghostButton} onClick={resetCompleteForm}>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <Button type="submit" loading={saving}>
+                    Salvar cadastro
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={resetCompleteForm}>
                     Limpar
-                  </button>
+                  </Button>
                 </div>
               </form>
-            </section>
+            </Card>
 
             {canCreateUser && (
-              <section style={panelCard}>
-                <div style={panelHeader}>
-                  <div>
-                    <h2 style={panelTitle}>Criar usuário manualmente</h2>
-                    <p style={panelSubtitle}>
-                      Fluxo administrativo via Auth. Use quando precisar criar login manual.
-                    </p>
-                  </div>
-                </div>
+              <Card>
+                <h2 style={panelTitleStyle}>Criar usuário manualmente</h2>
+                <p style={panelSubtitleStyle}>Fluxo administrativo via Auth. Use quando precisar criar login manual.</p>
 
-                <form onSubmit={handleManualCreate} style={formStack}>
+                <form onSubmit={handleManualCreate} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '18px' }}>
                   <Field label="Nome">
-                    <input
+                    <Input
                       type="text"
                       value={manualForm.nome}
-                      onChange={(e) =>
-                        setManualForm((prev) => ({ ...prev, nome: e.target.value }))
-                      }
+                      onChange={(e) => setManualForm((prev) => ({ ...prev, nome: e.target.value }))}
                       placeholder="Ex: AfiliadoA4"
-                      style={inputStyle}
                     />
                   </Field>
 
                   <Field label="Nome de match no CSV">
-                    <input
+                    <Input
                       type="text"
                       value={manualForm.afiliado_nome}
-                      onChange={(e) =>
-                        setManualForm((prev) => ({
-                          ...prev,
-                          afiliado_nome: e.target.value,
-                        }))
-                      }
+                      onChange={(e) => setManualForm((prev) => ({ ...prev, afiliado_nome: e.target.value }))}
                       placeholder="Precisa bater com conversions.afiliado"
-                      style={inputStyle}
                     />
                   </Field>
 
                   <Field label="Email">
-                    <input
+                    <Input
                       type="email"
                       value={manualForm.email}
-                      onChange={(e) =>
-                        setManualForm((prev) => ({ ...prev, email: e.target.value }))
-                      }
+                      onChange={(e) => setManualForm((prev) => ({ ...prev, email: e.target.value }))}
                       placeholder="Ex: afiliadoa4@test.com"
-                      style={inputStyle}
                     />
                   </Field>
 
                   <Field label="Senha temporária">
-                    <input
+                    <Input
                       type="password"
                       value={manualForm.senha}
-                      onChange={(e) =>
-                        setManualForm((prev) => ({
-                          ...prev,
-                          senha: e.target.value,
-                        }))
-                      }
+                      onChange={(e) => setManualForm((prev) => ({ ...prev, senha: e.target.value }))}
                       placeholder="Digite uma senha"
-                      style={inputStyle}
                     />
                   </Field>
 
                   <Field label="Role">
-                    <select
+                    <Select
                       value={manualForm.role}
                       onChange={(e) => {
                         const nextRole = e.target.value as UserRole
-
-                        setManualForm((prev) => ({
-                          ...prev,
-                          role: nextRole,
-                          parent_id: nextRole === 'afiliado' ? prev.parent_id : '',
-                        }))
+                        setManualForm((prev) => ({ ...prev, role: nextRole, parent_id: nextRole === 'afiliado' ? prev.parent_id : '' }))
                       }}
-                      style={inputStyle}
                     >
                       <option value="afiliado">Afiliado</option>
                       <option value="gerente">Gerente</option>
                       <option value="admin_partner">Admin partner</option>
-                    </select>
+                    </Select>
                   </Field>
 
                   {manualForm.role === 'afiliado' && (
                     <Field label="Gerente responsável">
-                      <select
-                        value={manualForm.parent_id}
-                        onChange={(e) =>
-                          setManualForm((prev) => ({
-                            ...prev,
-                            parent_id: e.target.value,
-                          }))
-                        }
-                        style={inputStyle}
-                      >
+                      <Select value={manualForm.parent_id} onChange={(e) => setManualForm((prev) => ({ ...prev, parent_id: e.target.value }))}>
                         <option value="">Selecione</option>
                         {managerOptions.map((manager) => (
                           <option key={manager.id} value={manager.id}>
                             {manager.nome}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </Field>
                   )}
 
-                  <div style={formActions}>
-                    <button type="submit" style={primaryButton} disabled={saving}>
-                      {saving ? 'Criando...' : 'Criar usuário'}
-                    </button>
-                  </div>
+                  <Button type="submit" loading={saving}>
+                    Criar usuário
+                  </Button>
                 </form>
-              </section>
+              </Card>
             )}
-
-            {message && <p style={messageStyle}>{message}</p>}
           </aside>
         </section>
       </div>
@@ -1357,298 +1066,13 @@ export default function UsuariosPage() {
   )
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      <label style={{ fontSize: '14px', color: '#cbd5e1' }}>{label}</label>
-      {children}
-    </div>
-  )
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={thStyle}>{children}</th>
-}
-
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={tdStyle}>{children}</td>
-}
-
-const pageBg: React.CSSProperties = {
-  minHeight: '100vh',
-  background:
-    'radial-gradient(circle at top left, rgba(34,197,94,0.16), transparent 30%), radial-gradient(circle at bottom right, rgba(16,185,129,0.12), transparent 28%), #030712',
-}
-
-const centerBox: React.CSSProperties = {
-  minHeight: '100vh',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  flexDirection: 'column',
-  padding: '24px',
-}
-
-const headerCard: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: '20px',
-  marginBottom: '24px',
-  padding: '24px 26px',
-  borderRadius: '24px',
-  border: '1px solid rgba(34,197,94,0.12)',
-  background: 'linear-gradient(180deg, rgba(10,18,14,0.94), rgba(4,9,7,0.94))',
-  boxShadow: '0 12px 40px rgba(0,0,0,0.28)',
-}
-
-const eyebrow: React.CSSProperties = {
+const eyebrowStyle: React.CSSProperties = {
   margin: 0,
-  color: '#86efac',
+  color: color.greenSoft,
   fontSize: '13px',
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
 }
 
-const pageTitle: React.CSSProperties = {
-  margin: '10px 0 8px',
-  fontSize: '34px',
-  fontWeight: 800,
-  letterSpacing: '-0.04em',
-}
-
-const pageSubtitle: React.CSSProperties = {
-  margin: 0,
-  color: '#94a3b8',
-  fontSize: '15px',
-}
-
-const gridSection: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1.55fr 0.95fr',
-  gap: '24px',
-  alignItems: 'start',
-}
-
-const mainColumn: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '24px',
-}
-
-const sideColumn: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '24px',
-}
-
-const panelCard: React.CSSProperties = {
-  borderRadius: '24px',
-  border: '1px solid rgba(34,197,94,0.12)',
-  background: 'linear-gradient(180deg, rgba(9,14,12,0.96), rgba(4,8,7,0.96))',
-  overflow: 'hidden',
-  boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
-  padding: '22px 24px',
-}
-
-const linkEditCard: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  padding: '14px',
-  borderRadius: '16px',
-  border: '1px solid rgba(34,197,94,0.1)',
-  background: 'rgba(2, 6, 23, 0.45)',
-}
-
-const panelHeader: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: '12px',
-  marginBottom: '18px',
-}
-
-const panelTitle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '18px',
-  fontWeight: 700,
-}
-
-const panelSubtitle: React.CSSProperties = {
-  margin: '6px 0 0',
-  color: '#94a3b8',
-  fontSize: '14px',
-}
-
-const filtersGrid: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(3, minmax(180px, 1fr))',
-  gap: '14px',
-}
-
-const formStack: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '16px',
-}
-
-const formActions: React.CSSProperties = {
-  display: 'flex',
-  gap: '10px',
-  marginTop: '6px',
-  flexWrap: 'wrap',
-}
-
-const subPanel: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '14px',
-  padding: '16px',
-  borderRadius: '18px',
-  border: '1px solid rgba(34,197,94,0.1)',
-  background: 'rgba(34,197,94,0.04)',
-}
-
-const subPanelTitle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '15px',
-  fontWeight: 700,
-  color: '#bbf7d0',
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '14px 16px',
-  background: 'rgba(2, 6, 23, 0.85)',
-  color: '#f8fafc',
-  border: '1px solid rgba(34,197,94,0.14)',
-  borderRadius: '14px',
-  outline: 'none',
-  fontSize: '14px',
-}
-
-const primaryButton: React.CSSProperties = {
-  border: '1px solid rgba(34,197,94,0.25)',
-  background: 'linear-gradient(180deg, #16a34a, #15803d)',
-  color: '#f0fdf4',
-  padding: '12px 18px',
-  borderRadius: '14px',
-  cursor: 'pointer',
-  fontWeight: 700,
-  fontSize: '14px',
-  boxShadow: '0 0 24px rgba(34,197,94,0.2)',
-}
-
-const secondaryButton: React.CSSProperties = {
-  border: '1px solid rgba(34,197,94,0.18)',
-  background: 'rgba(34,197,94,0.08)',
-  color: '#bbf7d0',
-  padding: '9px 12px',
-  borderRadius: '12px',
-  cursor: 'pointer',
-  fontWeight: 700,
-  fontSize: '13px',
-}
-
-const dangerButton: React.CSSProperties = {
-  border: '1px solid rgba(239,68,68,0.25)',
-  background: 'rgba(239,68,68,0.12)',
-  color: '#fecaca',
-  padding: '9px 12px',
-  borderRadius: '12px',
-  cursor: 'pointer',
-  fontWeight: 700,
-  fontSize: '13px',
-}
-
-const ghostButton: React.CSSProperties = {
-  border: '1px solid rgba(148,163,184,0.16)',
-  background: 'transparent',
-  color: '#cbd5e1',
-  padding: '12px 18px',
-  borderRadius: '14px',
-  cursor: 'pointer',
-  fontWeight: 600,
-  fontSize: '14px',
-}
-
-const tableStyle: React.CSSProperties = {
-  width: '100%',
-  minWidth: '900px',
-  borderCollapse: 'collapse',
-}
-
-const theadRow: React.CSSProperties = {
-  background: 'rgba(34,197,94,0.05)',
-  textAlign: 'left',
-}
-
-const tbodyRow: React.CSSProperties = {
-  borderTop: '1px solid rgba(34,197,94,0.08)',
-}
-
-const thStyle: React.CSSProperties = {
-  padding: '14px 16px',
-  color: '#bbf7d0',
-  fontSize: '12px',
-  fontWeight: 700,
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-}
-
-const tdStyle: React.CSSProperties = {
-  padding: '16px',
-  color: '#f8fafc',
-  fontSize: '14px',
-}
-
-const emptyStateTd: React.CSSProperties = {
-  padding: '28px',
-  textAlign: 'center',
-  color: '#94a3b8',
-}
-
-const warningBox: React.CSSProperties = {
-  padding: '12px 14px',
-  borderRadius: '14px',
-  background: 'rgba(250,204,21,0.08)',
-  border: '1px solid rgba(250,204,21,0.18)',
-  color: '#fde68a',
-  fontSize: '13px',
-  lineHeight: 1.4,
-}
-
-const messageStyle: React.CSSProperties = {
-  margin: 0,
-  color: '#bbf7d0',
-  fontSize: '14px',
-}
-
-const blockedCard: React.CSSProperties = {
-  maxWidth: '760px',
-  margin: '0 auto',
-  borderRadius: '24px',
-  border: '1px solid rgba(34,197,94,0.12)',
-  background: 'linear-gradient(180deg, rgba(10,18,14,0.94), rgba(4,9,7,0.94))',
-  boxShadow: '0 12px 40px rgba(0,0,0,0.28)',
-  padding: '28px',
-}
-
-const blockedTitle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '28px',
-  color: '#f8fafc',
-}
-
-const blockedText: React.CSSProperties = {
-  margin: '10px 0 0',
-  color: '#94a3b8',
-  fontSize: '15px',
-}
+const panelTitleStyle: React.CSSProperties = { margin: 0, fontSize: '18px', fontWeight: 700 }
+const panelSubtitleStyle: React.CSSProperties = { margin: '6px 0 0', color: color.textSecondary, fontSize: '14px' }

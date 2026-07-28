@@ -1,13 +1,11 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { getRequester, supabaseAdmin } from '@/lib/api-auth'
 
 export async function POST(req: Request) {
   try {
+    const auth = await getRequester(req, ['admin_master'])
+    if (!auth.ok) return auth.response
+
     const { user_id, afiliado_nome } = await req.json()
 
     if (!user_id || !afiliado_nome) {
@@ -15,7 +13,7 @@ export async function POST(req: Request) {
     }
 
     // verificar se já existe
-    const { data: existing } = await supabase
+    const { data: existing } = await supabaseAdmin
       .from('users')
       .select('id')
       .eq('afiliado_nome', afiliado_nome)
@@ -29,7 +27,7 @@ export async function POST(req: Request) {
     }
 
     // atualizar
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('users')
       .update({ afiliado_nome })
       .eq('id', user_id)

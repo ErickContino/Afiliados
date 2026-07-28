@@ -3,6 +3,20 @@
 import { useEffect, useState } from 'react'
 import LayoutShell from '../components/LayoutShell'
 import { supabase } from '@/lib/supabase'
+import { color, radius, shadow } from '@/lib/design-tokens'
+import {
+  Card,
+  Button,
+  Callout,
+  DataTable,
+  Column,
+  StatusBadge,
+  LoadingState,
+  AccessBlockedState,
+  useConfirmDialog,
+  useToast,
+} from '../components/ui'
+import { Upload, FileText, Eye, X } from '../components/icons'
 
 type UserRole = 'admin_master' | 'admin_partner' | 'gerente' | 'afiliado'
 type UserStatus = 'pending' | 'active' | 'inactive'
@@ -59,6 +73,9 @@ type AdminPayable = {
 }
 
 export default function FinanceiroPage() {
+  const toast = useToast()
+  const { confirm, dialog } = useConfirmDialog()
+
   const [userDb, setUserDb] = useState<UserRow | null>(null)
   const [overview, setOverview] = useState<FinancialOverview | null>(null)
   const [months, setMonths] = useState<FinancialMonth[]>([])
@@ -66,12 +83,14 @@ export default function FinanceiroPage() {
   const [selectedMonth, setSelectedMonth] = useState<FinancialMonth | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingHouses, setLoadingHouses] = useState(false)
-  const [message, setMessage] = useState('')
-  const [paying, setPaying] = useState(false)
+  const [payingId, setPayingId] = useState<string | null>(null)
   const [paymentNotes, setPaymentNotes] = useState('')
   const [activeTab, setActiveTab] = useState<'meu' | 'pagamentos'>('meu')
   const [adminPayables, setAdminPayables] = useState<AdminPayable[]>([])
   const [loadingPayables, setLoadingPayables] = useState(false)
+  const [uploadMonth, setUploadMonth] = useState<FinancialMonth | null>(null)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     init()
@@ -79,7 +98,6 @@ export default function FinanceiroPage() {
 
   async function init() {
     setLoading(true)
-    setMessage('')
 
     const { data: authData } = await supabase.auth.getUser()
 
@@ -95,7 +113,7 @@ export default function FinanceiroPage() {
       .single()
 
     if (userError || !userData) {
-      setMessage('Usuário não encontrado.')
+      toast.error('Usuário não encontrado.')
       setLoading(false)
       return
     }
@@ -114,20 +132,18 @@ export default function FinanceiroPage() {
     ])
 
     if (overviewResponse.error) {
-      setMessage(`Erro ao carregar resumo financeiro: ${overviewResponse.error.message}`)
+      toast.error(`Erro ao carregar resumo financeiro: ${overviewResponse.error.message}`)
       setLoading(false)
       return
     }
 
     if (monthsResponse.error) {
-      setMessage(`Erro ao carregar histórico financeiro: ${monthsResponse.error.message}`)
+      toast.error(`Erro ao carregar histórico financeiro: ${monthsResponse.error.message}`)
       setLoading(false)
       return
     }
 
-    const overviewData = Array.isArray(overviewResponse.data)
-      ? overviewResponse.data[0]
-      : overviewResponse.data
+    const overviewData = Array.isArray(overviewResponse.data) ? overviewResponse.data[0] : overviewResponse.data
 
     setOverview(overviewData as FinancialOverview)
     setMonths((monthsResponse.data || []) as FinancialMonth[])
@@ -148,13 +164,10 @@ export default function FinanceiroPage() {
   async function loadHouses(year: number, month: number) {
     setLoadingHouses(true)
 
-    const { data, error } = await supabase.rpc('get_my_financial_by_house', {
-      p_year: year,
-      p_month: month,
-    })
+    const { data, error } = await supabase.rpc('get_my_financial_by_house', { p_year: year, p_month: month })
 
     if (error) {
-      setMessage(`Erro ao carregar detalhamento por casa: ${error.message}`)
+      toast.error(`Erro ao carregar detalhamento por casa: ${error.message}`)
       setLoadingHouses(false)
       return
     }
@@ -174,7 +187,7 @@ export default function FinanceiroPage() {
     const { data, error } = await supabase.rpc('get_admin_financial_payables')
 
     if (error) {
-      setMessage(`Erro ao carregar pagamentos: ${error.message}`)
+      toast.error(`Erro ao carregar pagamentos: ${error.message}`)
       setLoadingPayables(false)
       return
     }
@@ -183,38 +196,33 @@ export default function FinanceiroPage() {
     setLoadingPayables(false)
   }
 
-  async function handleMarkPaid(payable: {
-    user_id: string
-    period_year: number
-    period_month: number
-  }) {
+  async function handleMarkPaid(payable: { user_id: string; period_year: number; period_month: number }) {
     if (!userDb || userDb.role !== 'admin_master') return
 
-    const confirmed = window.confirm(
-      `Confirmar baixa de ${formatMonthName(payable.period_month, payable.period_year)}?`
-    )
+    const rowKey = `${payable.user_id}-${payable.period_year}-${payable.period_month}`
 
+    const confirmed = await confirm({
+      title: 'Confirmar baixa',
+      description: `Confirmar baixa de ${formatMonthName(payable.period_month, payable.period_year)}?`,
+      confirmLabel: 'Confirmar baixa',
+    })
     if (!confirmed) return
 
-    setPaying(true)
-    setMessage('')
+    setPayingId(rowKey)
 
     try {
       const { data: sessionData } = await supabase.auth.getSession()
       const token = sessionData.session?.access_token
 
       if (!token) {
-        setMessage('Sessão inválida. Faça login novamente.')
-        setPaying(false)
+        toast.error('Sessão inválida. Faça login novamente.')
+        setPayingId(null)
         return
       }
 
       const res = await fetch('/api/financial/mark-paid', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           user_id: payable.user_id,
           period_year: payable.period_year,
@@ -226,29 +234,99 @@ export default function FinanceiroPage() {
       const data = await res.json()
 
       if (!res.ok) {
-        setMessage(data.error || 'Erro ao marcar como pago.')
-        setPaying(false)
+        toast.error(data.error || 'Erro ao marcar como pago.')
+        setPayingId(null)
         return
       }
 
-      setMessage('Pagamento marcado como pago com sucesso.')
+      toast.success('Pagamento marcado como pago com sucesso.')
       setPaymentNotes('')
 
       await init()
       await loadAdminPayables()
 
-      setPaying(false)
+      setPayingId(null)
     } catch {
-      setMessage('Erro inesperado ao marcar como pago.')
-      setPaying(false)
+      toast.error('Erro inesperado ao marcar como pago.')
+      setPayingId(null)
     }
   }
 
+  async function handleUploadInvoice(e: React.FormEvent) {
+    e.preventDefault()
+    if (!uploadMonth || !uploadFile) return
+
+    if (uploadFile.type !== 'application/pdf') {
+      toast.error('Envie um arquivo em PDF.')
+      return
+    }
+
+    setUploading(true)
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        toast.error('Sessão inválida. Faça login novamente.')
+        setUploading(false)
+        return
+      }
+
+      const formData = new FormData()
+      formData.append('file', uploadFile)
+      formData.append('period_year', String(uploadMonth.period_year))
+      formData.append('period_month', String(uploadMonth.period_month))
+
+      const res = await fetch('/api/financial/upload-invoice', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      })
+
+      const data = await res.json()
+      setUploading(false)
+
+      if (!res.ok) {
+        toast.error(data.error || 'Erro ao enviar nota fiscal.')
+        return
+      }
+
+      toast.success('Nota fiscal enviada com sucesso.')
+      setUploadMonth(null)
+      setUploadFile(null)
+      await init()
+    } catch {
+      setUploading(false)
+      toast.error('Erro inesperado ao enviar nota fiscal.')
+    }
+  }
+
+  async function handleViewInvoice(userId: string, year: number, month: number) {
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      toast.error('Sessão inválida. Faça login novamente.')
+      return
+    }
+
+    const res = await fetch(`/api/financial/invoice-url?user_id=${userId}&period_year=${year}&period_month=${month}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    const data = await res.json()
+
+    if (!res.ok || !data.url) {
+      toast.error(data.error || 'Nota fiscal não encontrada.')
+      return
+    }
+
+    window.open(data.url, '_blank', 'noopener,noreferrer')
+  }
+
   function formatMoney(value?: number | null) {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-    }).format(Number(value || 0))
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0))
   }
 
   function formatDate(date?: string | null) {
@@ -258,15 +336,11 @@ export default function FinanceiroPage() {
 
   function formatMonthName(month: number, year: number) {
     const date = new Date(year, month - 1, 1)
-    return date.toLocaleDateString('pt-BR', {
-      month: 'long',
-      year: 'numeric',
-    })
+    return date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
   }
 
   function formatPayoutStatus(status: string, isCurrent: boolean) {
     if (isCurrent) return 'Em andamento'
-
     const map: Record<string, string> = {
       awaiting_nf: 'Aguardando NF',
       paid: 'Pago',
@@ -274,7 +348,6 @@ export default function FinanceiroPage() {
       cancelled: 'Cancelado',
       open: 'Em andamento',
     }
-
     return map[status] || status
   }
 
@@ -285,703 +358,426 @@ export default function FinanceiroPage() {
       approved: 'NF aprovada',
       rejected: 'NF rejeitada',
     }
-
     return map[status] || status
   }
 
   if (loading) {
-    return (
-      <main style={pageBg}>
-        <div style={centerBox}>Carregando...</div>
-      </main>
-    )
+    return <LoadingState fullPage label="Carregando financeiro..." />
   }
 
   if (!userDb) {
     return (
-      <main style={pageBg}>
-        <div style={centerBox}>Financeiro indisponível.</div>
-      </main>
+      <div style={{ minHeight: '100vh', background: color.bgApp, display: 'flex', alignItems: 'center', justifyContent: 'center', color: color.textSecondary }}>
+        Financeiro indisponível.
+      </div>
     )
   }
 
   if (userDb.status === 'pending') {
     return (
-      <LayoutShell
-        active="financeiro"
-        user={{
-          nome: userDb.nome || '',
-          email: userDb.email || '',
-          role: userDb.role || '',
-        }}
-      >
-        <section style={blockedCard}>
-          <h1 style={blockedTitle}>Cadastro recebido</h1>
-          <p style={blockedText}>
-            Seu cadastro está aguardando liberação pelo administrador.
-          </p>
-        </section>
+      <LayoutShell active="financeiro" user={{ nome: userDb.nome || '', email: userDb.email || '', role: userDb.role || '' }}>
+        <AccessBlockedState kind="pending" />
       </LayoutShell>
     )
   }
 
   if (userDb.status === 'inactive') {
     return (
-      <LayoutShell
-        active="financeiro"
-        user={{
-          nome: userDb.nome || '',
-          email: userDb.email || '',
-          role: userDb.role || '',
-        }}
-      >
-        <section style={blockedCard}>
-          <h1 style={blockedTitle}>Conta inativa</h1>
-          <p style={blockedText}>
-            Sua conta está inativa. Entre em contato com o administrador.
-          </p>
-        </section>
+      <LayoutShell active="financeiro" user={{ nome: userDb.nome || '', email: userDb.email || '', role: userDb.role || '' }}>
+        <AccessBlockedState kind="inactive" />
       </LayoutShell>
     )
   }
 
-  return (
-    <LayoutShell
-      active="financeiro"
-      user={{
-        nome: userDb.nome || '',
-        email: userDb.email || '',
-        role: userDb.role || '',
-      }}
-    >
-      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-        <header style={headerCard}>
-          <div>
-            <p style={eyebrow}>Pagamentos</p>
-            <h1 style={pageTitle}>Financeiro</h1>
-            <p style={pageSubtitle}>
-              Acompanhe seus ganhos, fechamentos e informações para emissão de NF.
-            </p>
+  const payableColumns: Column<AdminPayable>[] = [
+    { key: 'user', header: 'Usuário', render: (p) => p.nome || p.email || '-' },
+    { key: 'role', header: 'Role', render: (p) => p.role || '-' },
+    { key: 'month', header: 'Competência', render: (p) => formatMonthName(p.period_month, p.period_year) },
+    { key: 'period', header: 'Período', render: (p) => `${formatDate(p.period_start)} até ${formatDate(p.period_end)}` },
+    { key: 'amount', header: 'Valor', render: (p) => formatMoney(p.amount) },
+    {
+      key: 'payout_status',
+      header: 'Status pagamento',
+      render: (p) => <StatusBadge status={p.payout_status} label={formatPayoutStatus(p.payout_status, false)} />,
+    },
+    {
+      key: 'invoice_status',
+      header: 'Status NF',
+      render: (p) => <StatusBadge status={p.invoice_status} label={formatInvoiceStatus(p.invoice_status)} />,
+    },
+    { key: 'paid_at', header: 'Pago em', render: (p) => (p.paid_at ? new Date(p.paid_at).toLocaleDateString('pt-BR') : '-') },
+    {
+      key: 'action',
+      header: 'Ação',
+      render: (p) => {
+        const rowKey = `${p.user_id}-${p.period_year}-${p.period_month}`
+        return (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {p.invoice_status !== 'not_sent' && (
+              <Button variant="ghost" size="sm" leftIcon={<Eye size={14} />} onClick={() => handleViewInvoice(p.user_id, p.period_year, p.period_month)}>
+                Ver NF
+              </Button>
+            )}
+            {p.payout_status !== 'paid' ? (
+              <Button size="sm" loading={payingId === rowKey} onClick={() => handleMarkPaid(p)}>
+                Dar baixa
+              </Button>
+            ) : (
+              <span style={{ color: color.textSecondary, fontSize: '13px' }}>Pago</span>
+            )}
           </div>
-        </header>
+        )
+      },
+    },
+  ]
+
+  const monthColumns: Column<FinancialMonth>[] = [
+    { key: 'month', header: 'Competência', render: (m) => formatMonthName(m.period_month, m.period_year) },
+    { key: 'period', header: 'Período', render: (m) => `${formatDate(m.period_start)} até ${formatDate(m.period_end)}` },
+    { key: 'amount', header: 'Valor', render: (m) => formatMoney(m.gross_amount) },
+    {
+      key: 'payout_status',
+      header: 'Status pagamento',
+      render: (m) => <StatusBadge status={m.payout_status} label={formatPayoutStatus(m.payout_status, m.is_current_month)} />,
+    },
+    {
+      key: 'invoice_status',
+      header: 'Status NF',
+      render: (m) => <StatusBadge status={m.invoice_status} label={formatInvoiceStatus(m.invoice_status)} />,
+    },
+    { key: 'paid_at', header: 'Pago em', render: (m) => (m.paid_at ? new Date(m.paid_at).toLocaleDateString('pt-BR') : '-') },
+    {
+      key: 'actions',
+      header: 'Ação',
+      render: (m) => (
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <Button variant="secondary" size="sm" onClick={() => selectMonth(m)}>
+            Ver casas
+          </Button>
+          {!m.is_current_month &&
+            (m.invoice_status === 'not_sent' ? (
+              <Button variant="secondary" size="sm" leftIcon={<Upload size={14} />} onClick={() => setUploadMonth(m)}>
+                Enviar NF
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm" leftIcon={<FileText size={14} />} onClick={() => handleViewInvoice(userDb.id, m.period_year, m.period_month)}>
+                Ver NF
+              </Button>
+            ))}
+        </div>
+      ),
+    },
+  ]
+
+  return (
+    <LayoutShell active="financeiro" user={{ nome: userDb.nome || '', email: userDb.email || '', role: userDb.role || '' }}>
+      {dialog}
+      {uploadMonth && (
+        <InvoiceUploadModal
+          month={uploadMonth}
+          file={uploadFile}
+          uploading={uploading}
+          onFileChange={setUploadFile}
+          onClose={() => {
+            setUploadMonth(null)
+            setUploadFile(null)
+          }}
+          onSubmit={handleUploadInvoice}
+          formatMonthName={formatMonthName}
+        />
+      )}
+
+      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+        <Card variant="header" style={{ marginBottom: '24px' }}>
+          <p style={eyebrowStyle}>Pagamentos</p>
+          <h1 style={{ margin: '10px 0 8px', fontSize: '34px', fontWeight: 800, letterSpacing: '-0.04em' }}>Financeiro</h1>
+          <p style={{ margin: 0, color: color.textSecondary, fontSize: '15px' }}>
+            Acompanhe seus ganhos, fechamentos e informações para emissão de NF.
+          </p>
+        </Card>
 
         {userDb.role === 'admin_master' && (
-          <div style={tabsBar}>
-            <button
-              type="button"
-              style={activeTab === 'meu' ? activeTabButton : tabButton}
-              onClick={() => setActiveTab('meu')}
-            >
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '24px', flexWrap: 'wrap' }}>
+            <Button variant={activeTab === 'meu' ? 'secondary' : 'ghost'} onClick={() => setActiveTab('meu')}>
               Meu Financeiro
-            </button>
-
-            <button
-              type="button"
-              style={activeTab === 'pagamentos' ? activeTabButton : tabButton}
-              onClick={() => setActiveTab('pagamentos')}
-            >
+            </Button>
+            <Button variant={activeTab === 'pagamentos' ? 'secondary' : 'ghost'} onClick={() => setActiveTab('pagamentos')}>
               Pagamentos
-            </button>
+            </Button>
           </div>
         )}
 
-        {message && <p style={messageStyle}>{message}</p>}
-
         {activeTab === 'pagamentos' && userDb.role === 'admin_master' && (
-          <section style={panelCard}>
-            <div style={panelHeader}>
-              <div>
-                <h2 style={panelTitle}>Pagamentos / Controle de Pagamentos</h2>
-                <p style={panelSubtitle}>
-                  Controle mensal de valores a pagar para todos os usuários ativos.
-                </p>
-              </div>
-            </div>
+          <Card>
+            <h2 style={panelTitleStyle}>Pagamentos / Controle de Pagamentos</h2>
+            <p style={panelSubtitleStyle}>Controle mensal de valores a pagar para todos os usuários ativos.</p>
 
-            <div style={{ marginBottom: '18px' }}>
+            <div style={{ marginTop: '16px', marginBottom: '18px' }}>
               <textarea
                 value={paymentNotes}
                 onChange={(e) => setPaymentNotes(e.target.value)}
                 placeholder="Observações da baixa..."
-                style={textareaStyle}
+                className="az-input"
+                style={{
+                  width: '100%',
+                  minHeight: '90px',
+                  padding: '14px 16px',
+                  background: color.inputBg,
+                  color: color.textPrimary,
+                  border: `1px solid ${color.inputBorder}`,
+                  borderRadius: radius.md,
+                  fontSize: '14px',
+                  resize: 'vertical',
+                }}
               />
             </div>
 
-            <div style={{ overflowX: 'auto' }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr style={theadRow}>
-                    <Th>Usuário</Th>
-                    <Th>Role</Th>
-                    <Th>Competência</Th>
-                    <Th>Período</Th>
-                    <Th>Valor</Th>
-                    <Th>Status pagamento</Th>
-                    <Th>Status NF</Th>
-                    <Th>Pago em</Th>
-                    <Th>Ação</Th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {loadingPayables ? (
-                    <tr>
-                      <td colSpan={9} style={emptyStateTd}>
-                        Carregando pagamentos...
-                      </td>
-                    </tr>
-                  ) : adminPayables.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} style={emptyStateTd}>
-                        Nenhum pagamento encontrado.
-                      </td>
-                    </tr>
-                  ) : (
-                    adminPayables.map((payable) => (
-                      <tr
-                        key={`${payable.user_id}-${payable.period_year}-${payable.period_month}`}
-                        style={tbodyRow}
-                      >
-                        <Td>{payable.nome || payable.email || '-'}</Td>
-                        <Td>{payable.role || '-'}</Td>
-                        <Td>{formatMonthName(payable.period_month, payable.period_year)}</Td>
-                        <Td>
-                          {formatDate(payable.period_start)} até {formatDate(payable.period_end)}
-                        </Td>
-                        <Td>{formatMoney(payable.amount)}</Td>
-                        <Td>{formatPayoutStatus(payable.payout_status, false)}</Td>
-                        <Td>{formatInvoiceStatus(payable.invoice_status)}</Td>
-                        <Td>
-                          {payable.paid_at
-                            ? new Date(payable.paid_at).toLocaleDateString('pt-BR')
-                            : '-'}
-                        </Td>
-                        <Td>
-                          {payable.payout_status !== 'paid' ? (
-                            <button
-                              type="button"
-                              style={primaryButton}
-                              disabled={paying}
-                              onClick={() => handleMarkPaid(payable)}
-                            >
-                              {paying ? 'Salvando...' : 'Dar baixa'}
-                            </button>
-                          ) : (
-                            <span style={{ color: '#94a3b8' }}>Pago</span>
-                          )}
-                        </Td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
+            <DataTable
+              columns={payableColumns}
+              data={adminPayables}
+              rowKey={(p) => `${p.user_id}-${p.period_year}-${p.period_month}`}
+              loading={loadingPayables}
+              emptyMessage="Nenhum pagamento encontrado."
+            />
+          </Card>
         )}
 
         {activeTab === 'meu' && (
           <>
-            <section style={cardsGrid}>
-          <section style={featuredCard}>
-            <p style={cardLabel}>Saldo disponível para saque</p>
-            <h2 style={bigValue}>{formatMoney(overview?.available_balance)}</h2>
-            <p style={cardText}>Competências fechadas ainda não pagas.</p>
-          </section>
-
-          <section style={panelCard}>
-            <p style={cardLabel}>Comissão em andamento</p>
-            <h2 style={cardValue}>{formatMoney(overview?.current_month_amount)}</h2>
-            <p style={cardText}>
-              Período atual: {formatDate(overview?.current_period_start)} até{' '}
-              {formatDate(overview?.current_period_end)}
-            </p>
-            <div style={warningBox}>Este valor ainda não está disponível para saque.</div>
-          </section>
-
-          <section style={panelCard}>
-            <p style={cardLabel}>Último fechamento</p>
-
-            {overview?.last_closed_year && overview?.last_closed_month ? (
-              <>
-                <h2 style={cardValue}>
-                  {formatMoney(overview.last_closed_amount)}
+            <section className="grid grid-cols-1 md:grid-cols-3 gap-5" style={{ marginBottom: '24px' }}>
+              <Card variant="featured">
+                <p style={cardLabelStyle}>Saldo disponível para saque</p>
+                <h2 style={{ margin: '16px 0 8px', fontSize: '38px', fontWeight: 900, letterSpacing: '-0.04em' }}>
+                  {formatMoney(overview?.available_balance)}
                 </h2>
-                <p style={cardText}>
-                  {formatMonthName(overview.last_closed_month, overview.last_closed_year)}
+                <p style={cardTextStyle}>Competências fechadas ainda não pagas.</p>
+              </Card>
+
+              <Card>
+                <p style={cardLabelStyle}>Comissão em andamento</p>
+                <h2 style={{ margin: '14px 0 8px', fontSize: '28px', fontWeight: 900, letterSpacing: '-0.03em' }}>
+                  {formatMoney(overview?.current_month_amount)}
+                </h2>
+                <p style={cardTextStyle}>
+                  Período atual: {formatDate(overview?.current_period_start)} até {formatDate(overview?.current_period_end)}
                 </p>
-              </>
-            ) : (
-              <p style={cardText}>Nenhum fechamento anterior encontrado.</p>
-            )}
-          </section>
-        </section>
-
-        <section style={gridSection}>
-          <div style={mainColumn}>
-            <section style={panelCard}>
-              <div style={panelHeader}>
-                <div>
-                  <h2 style={panelTitle}>Histórico mensal</h2>
-                  <p style={panelSubtitle}>Fechamentos e competências financeiras.</p>
+                <div style={{ marginTop: '16px' }}>
+                  <Callout variant="warning">Este valor ainda não está disponível para saque.</Callout>
                 </div>
-              </div>
+              </Card>
 
-              <div style={{ overflowX: 'auto' }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr style={theadRow}>
-                      <Th>Competência</Th>
-                      <Th>Período</Th>
-                      <Th>Valor</Th>
-                      <Th>Status pagamento</Th>
-                      <Th>Status NF</Th>
-                      <Th>Pago em</Th>
-                      <Th>Ação</Th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {months.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} style={emptyStateTd}>
-                          Nenhum histórico financeiro encontrado.
-                        </td>
-                      </tr>
-                    ) : (
-                      months.map((month) => (
-                        <tr key={`${month.period_year}-${month.period_month}`} style={tbodyRow}>
-                          <Td>{formatMonthName(month.period_month, month.period_year)}</Td>
-                          <Td>
-                            {formatDate(month.period_start)} até {formatDate(month.period_end)}
-                          </Td>
-                          <Td>{formatMoney(month.gross_amount)}</Td>
-                          <Td>{formatPayoutStatus(month.payout_status, month.is_current_month)}</Td>
-                          <Td>{formatInvoiceStatus(month.invoice_status)}</Td>
-                          <Td>{month.paid_at ? new Date(month.paid_at).toLocaleDateString('pt-BR') : '-'}</Td>
-                          <Td>
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              <button
-                                type="button"
-                                style={secondaryButton}
-                                onClick={() => selectMonth(month)}
-                              >
-                                Ver casas
-                              </button>
-                            </div>
-                          </Td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <Card>
+                <p style={cardLabelStyle}>Último fechamento</p>
+                {overview?.last_closed_year && overview?.last_closed_month ? (
+                  <>
+                    <h2 style={{ margin: '14px 0 8px', fontSize: '28px', fontWeight: 900, letterSpacing: '-0.03em' }}>
+                      {formatMoney(overview.last_closed_amount)}
+                    </h2>
+                    <p style={cardTextStyle}>{formatMonthName(overview.last_closed_month, overview.last_closed_year)}</p>
+                  </>
+                ) : (
+                  <p style={cardTextStyle}>Nenhum fechamento anterior encontrado.</p>
+                )}
+              </Card>
             </section>
 
-            <section style={panelCard}>
-              <div style={panelHeader}>
-                <div>
-                  <h2 style={panelTitle}>Detalhamento por casa</h2>
-                  <p style={panelSubtitle}>
-                    {selectedMonth
-                      ? formatMonthName(selectedMonth.period_month, selectedMonth.period_year)
-                      : 'Selecione um mês para visualizar.'}
+            <section className="grid grid-cols-1 xl:grid-cols-[1.5fr_0.85fr] gap-6 items-start">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                <Card>
+                  <h2 style={panelTitleStyle}>Histórico mensal</h2>
+                  <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>Fechamentos e competências financeiras.</p>
+                  <DataTable columns={monthColumns} data={months} rowKey={(m) => `${m.period_year}-${m.period_month}`} emptyMessage="Nenhum histórico financeiro encontrado." />
+                </Card>
+
+                <Card>
+                  <h2 style={panelTitleStyle}>Detalhamento por casa</h2>
+                  <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>
+                    {selectedMonth ? formatMonthName(selectedMonth.period_month, selectedMonth.period_year) : 'Selecione um mês para visualizar.'}
                   </p>
-                </div>
-              </div>
 
-              {loadingHouses ? (
-                <p style={panelSubtitle}>Carregando casas...</p>
-              ) : houses.length === 0 ? (
-                <div style={emptyBox}>Nenhum valor por casa encontrado.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {houses.map((house) => (
-                    <div key={house.house_id} style={houseCard}>
-                      <span>{house.house_name}</span>
-                      <strong>{formatMoney(house.amount)}</strong>
+                  {loadingHouses ? (
+                    <LoadingState label="Carregando casas..." />
+                  ) : houses.length === 0 ? (
+                    <div
+                      style={{
+                        padding: '24px',
+                        borderRadius: radius.lg,
+                        border: '1px dashed rgba(34,197,94,0.18)',
+                        color: color.textSecondary,
+                        textAlign: 'center',
+                      }}
+                    >
+                      Nenhum valor por casa encontrado.
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          </div>
-
-            <aside style={sideColumn}>
-              <section style={panelCard}>
-                <h2 style={panelTitle}>Informações para NF</h2>
-              <p style={panelSubtitle}>
-                Use estas informações para emissão da nota fiscal.
-              </p>
-
-              <div style={nfList}>
-                <Info label="CNPJ" value="47.149.537/0001-81" />
-                <Info label="Nome/Razão" value="Michael Prado Gonçalves" />
-                <Info label="Tipo" value="Prestador" />
-                <Info
-                  label="Serviço"
-                  value="17.06.01 — Propaganda de publicidade, inclusive promoções de vendas"
-                />
-                <Info
-                  label="Descrição sugerida"
-                  value={
-                    selectedMonth
-                      ? `Comissão por afiliação referente ao período ${formatMonthName(
-                          selectedMonth.period_month,
-                          selectedMonth.period_year
-                        )}.`
-                      : 'Comissão por afiliação referente ao período [mês/ano].'
-                  }
-                />
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {houses.map((house) => (
+                        <div
+                          key={house.house_id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: '16px',
+                            padding: '16px',
+                            borderRadius: radius.lg,
+                            border: '1px solid rgba(34,197,94,0.1)',
+                            background: 'rgba(2, 6, 23, 0.72)',
+                          }}
+                        >
+                          <span>{house.house_name}</span>
+                          <strong>{formatMoney(house.amount)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
               </div>
 
-              <div style={warningBox}>
-                Emita a nota fiscal com o valor do fechamento indicado na competência correspondente.
-              </div>
+              <aside>
+                <Card>
+                  <h2 style={panelTitleStyle}>Informações para NF</h2>
+                  <p style={panelSubtitleStyle}>Use estas informações para emissão da nota fiscal.</p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '18px' }}>
+                    <NfInfo label="CNPJ" value="47.149.537/0001-81" />
+                    <NfInfo label="Nome/Razão" value="Michael Prado Gonçalves" />
+                    <NfInfo label="Tipo" value="Prestador" />
+                    <NfInfo label="Serviço" value="17.06.01 — Propaganda de publicidade, inclusive promoções de vendas" />
+                    <NfInfo
+                      label="Descrição sugerida"
+                      value={
+                        selectedMonth
+                          ? `Comissão por afiliação referente ao período ${formatMonthName(selectedMonth.period_month, selectedMonth.period_year)}.`
+                          : 'Comissão por afiliação referente ao período [mês/ano].'
+                      }
+                    />
+                  </div>
+
+                  <div style={{ marginTop: '16px' }}>
+                    <Callout variant="warning">Emita a nota fiscal com o valor do fechamento indicado na competência correspondente.</Callout>
+                  </div>
+                </Card>
+              </aside>
             </section>
-                    </aside>
-                  </section>
-                </>
-              )}
-                </div>
+          </>
+        )}
+      </div>
     </LayoutShell>
   )
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function InvoiceUploadModal({
+  month,
+  file,
+  uploading,
+  onFileChange,
+  onClose,
+  onSubmit,
+  formatMonthName,
+}: {
+  month: FinancialMonth
+  file: File | null
+  uploading: boolean
+  onFileChange: (file: File | null) => void
+  onClose: () => void
+  onSubmit: (e: React.FormEvent) => void
+  formatMonthName: (month: number, year: number) => string
+}) {
   return (
-    <div style={infoItem}>
-      <p style={infoLabel}>{label}</p>
-      <p style={infoValue}>{value}</p>
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(2,6,23,0.7)',
+        backdropFilter: 'blur(2px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2000,
+        padding: '20px',
+      }}
+      onClick={onClose}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '420px' }}>
+        <Card
+          variant="header"
+          style={{ borderRadius: radius.xl, boxShadow: shadow.cardFeatured }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Enviar nota fiscal</h2>
+            <button
+              onClick={onClose}
+              style={{ background: 'transparent', border: 'none', color: color.textSecondary, cursor: 'pointer' }}
+              aria-label="Fechar"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <p style={{ margin: '0 0 18px', color: color.textSecondary, fontSize: '14px' }}>
+            Competência: {formatMonthName(month.period_month, month.period_year)}
+          </p>
+
+          <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <label
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                padding: '28px',
+                borderRadius: radius.lg,
+                border: '1px dashed rgba(34,197,94,0.3)',
+                background: 'rgba(34,197,94,0.04)',
+                color: color.textSecondary,
+                fontSize: '13px',
+                cursor: 'pointer',
+                textAlign: 'center',
+              }}
+            >
+              <Upload size={22} color={color.greenSoft} />
+              {file ? <strong style={{ color: color.textPrimary }}>{file.name}</strong> : 'Clique para selecionar o PDF da nota fiscal'}
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={(e) => onFileChange(e.target.files?.[0] || null)}
+                style={{ display: 'none' }}
+              />
+            </label>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <Button type="button" variant="ghost" onClick={onClose}>
+                Cancelar
+              </Button>
+              <Button type="submit" loading={uploading} disabled={!file}>
+                Enviar NF
+              </Button>
+            </div>
+          </form>
+        </Card>
+      </div>
     </div>
   )
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={thStyle}>{children}</th>
+function NfInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ padding: '14px', borderRadius: radius.lg, border: '1px solid rgba(34,197,94,0.1)', background: 'rgba(34,197,94,0.04)' }}>
+      <p style={{ margin: 0, color: color.greenSoft, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 800 }}>{label}</p>
+      <p style={{ margin: '7px 0 0', color: color.textPrimary, fontSize: '14px', lineHeight: 1.45, overflowWrap: 'anywhere' }}>{value}</p>
+    </div>
+  )
 }
 
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={tdStyle}>{children}</td>
-}
-
-const pageBg: React.CSSProperties = {
-  minHeight: '100vh',
-  background: '#030712',
-  color: '#f8fafc',
-}
-
-const centerBox: React.CSSProperties = {
-  minHeight: '100vh',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  color: '#bbf7d0',
-}
-
-const headerCard: React.CSSProperties = {
-  marginBottom: '24px',
-  padding: '24px 26px',
-  borderRadius: '24px',
-  border: '1px solid rgba(34,197,94,0.12)',
-  background: 'linear-gradient(180deg, rgba(10,18,14,0.94), rgba(4,9,7,0.94))',
-  boxShadow: '0 12px 40px rgba(0,0,0,0.28)',
-}
-
-const eyebrow: React.CSSProperties = {
+const eyebrowStyle: React.CSSProperties = {
   margin: 0,
-  color: '#86efac',
+  color: color.greenSoft,
   fontSize: '13px',
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
 }
 
-const pageTitle: React.CSSProperties = {
-  margin: '10px 0 8px',
-  fontSize: '34px',
-  fontWeight: 800,
-  letterSpacing: '-0.04em',
-}
-
-const pageSubtitle: React.CSSProperties = {
-  margin: 0,
-  color: '#94a3b8',
-  fontSize: '15px',
-}
-
-const cardsGrid: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1.2fr 1fr 1fr',
-  gap: '20px',
-  marginBottom: '24px',
-}
-
-const gridSection: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1.5fr 0.85fr',
-  gap: '24px',
-  alignItems: 'start',
-}
-
-const mainColumn: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '24px',
-}
-
-const sideColumn: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '24px',
-}
-
-const panelCard: React.CSSProperties = {
-  borderRadius: '24px',
-  border: '1px solid rgba(34,197,94,0.12)',
-  background: 'linear-gradient(180deg, rgba(9,14,12,0.96), rgba(4,8,7,0.96))',
-  boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
-  padding: '22px 24px',
-}
-
-const featuredCard: React.CSSProperties = {
-  ...panelCard,
-  border: '1px solid rgba(34,197,94,0.24)',
-  background:
-    'radial-gradient(circle at top left, rgba(34,197,94,0.18), transparent 38%), linear-gradient(180deg, rgba(9,14,12,0.98), rgba(4,8,7,0.98))',
-}
-
-const panelHeader: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: '12px',
-  marginBottom: '18px',
-}
-
-const panelTitle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '18px',
-  fontWeight: 700,
-}
-
-const panelSubtitle: React.CSSProperties = {
-  margin: '6px 0 0',
-  color: '#94a3b8',
-  fontSize: '14px',
-}
-
-const cardLabel: React.CSSProperties = {
-  margin: 0,
-  color: '#86efac',
-  fontSize: '12px',
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-  fontWeight: 800,
-}
-
-const bigValue: React.CSSProperties = {
-  margin: '16px 0 8px',
-  fontSize: '38px',
-  fontWeight: 900,
-  letterSpacing: '-0.04em',
-}
-
-const cardValue: React.CSSProperties = {
-  margin: '14px 0 8px',
-  fontSize: '28px',
-  fontWeight: 900,
-  letterSpacing: '-0.03em',
-}
-
-const cardText: React.CSSProperties = {
-  margin: '8px 0 0',
-  color: '#94a3b8',
-  fontSize: '14px',
-  lineHeight: 1.5,
-}
-
-const tableStyle: React.CSSProperties = {
-  width: '100%',
-  minWidth: '1000px',
-  borderCollapse: 'collapse',
-}
-
-const theadRow: React.CSSProperties = {
-  background: 'rgba(34,197,94,0.05)',
-  textAlign: 'left',
-}
-
-const tbodyRow: React.CSSProperties = {
-  borderTop: '1px solid rgba(34,197,94,0.08)',
-}
-
-const thStyle: React.CSSProperties = {
-  padding: '14px 16px',
-  color: '#bbf7d0',
-  fontSize: '12px',
-  fontWeight: 700,
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-}
-
-const tdStyle: React.CSSProperties = {
-  padding: '16px',
-  color: '#f8fafc',
-  fontSize: '14px',
-}
-
-const emptyStateTd: React.CSSProperties = {
-  padding: '28px',
-  textAlign: 'center',
-  color: '#94a3b8',
-}
-
-const secondaryButton: React.CSSProperties = {
-  border: '1px solid rgba(34,197,94,0.16)',
-  background: 'rgba(34,197,94,0.08)',
-  color: '#dcfce7',
-  padding: '9px 12px',
-  borderRadius: '10px',
-  cursor: 'pointer',
-  fontWeight: 600,
-  fontSize: '13px',
-}
-
-const warningBox: React.CSSProperties = {
-  marginTop: '16px',
-  padding: '12px 14px',
-  borderRadius: '14px',
-  background: 'rgba(250,204,21,0.08)',
-  border: '1px solid rgba(250,204,21,0.18)',
-  color: '#fde68a',
-  fontSize: '13px',
-  lineHeight: 1.4,
-}
-
-const messageStyle: React.CSSProperties = {
-  margin: '0 0 18px',
-  color: '#bbf7d0',
-  fontSize: '14px',
-}
-
-const emptyBox: React.CSSProperties = {
-  padding: '24px',
-  borderRadius: '18px',
-  border: '1px dashed rgba(34,197,94,0.18)',
-  color: '#94a3b8',
-  textAlign: 'center',
-}
-
-const houseCard: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: '16px',
-  padding: '16px',
-  borderRadius: '18px',
-  border: '1px solid rgba(34,197,94,0.1)',
-  background: 'rgba(2, 6, 23, 0.72)',
-  color: '#f8fafc',
-}
-
-const nfList: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  marginTop: '18px',
-}
-
-const infoItem: React.CSSProperties = {
-  padding: '14px',
-  borderRadius: '16px',
-  border: '1px solid rgba(34,197,94,0.1)',
-  background: 'rgba(34,197,94,0.04)',
-}
-
-const infoLabel: React.CSSProperties = {
-  margin: 0,
-  color: '#86efac',
-  fontSize: '11px',
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-  fontWeight: 800,
-}
-
-const infoValue: React.CSSProperties = {
-  margin: '7px 0 0',
-  color: '#f8fafc',
-  fontSize: '14px',
-  lineHeight: 1.45,
-  overflowWrap: 'anywhere',
-}
-
-const blockedCard: React.CSSProperties = {
-  maxWidth: '760px',
-  margin: '0 auto',
-  borderRadius: '24px',
-  border: '1px solid rgba(34,197,94,0.12)',
-  background: 'linear-gradient(180deg, rgba(10,18,14,0.94), rgba(4,9,7,0.94))',
-  boxShadow: '0 12px 40px rgba(0,0,0,0.28)',
-  padding: '28px',
-}
-
-const blockedTitle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '28px',
-  color: '#f8fafc',
-}
-
-const blockedText: React.CSSProperties = {
-  margin: '10px 0 0',
-  color: '#94a3b8',
-  fontSize: '15px',
-}
-
-const primaryButton: React.CSSProperties = {
-  border: '1px solid rgba(34,197,94,0.25)',
-  background: 'linear-gradient(180deg, #16a34a, #15803d)',
-  color: '#f0fdf4',
-  padding: '9px 12px',
-  borderRadius: '10px',
-  cursor: 'pointer',
-  fontWeight: 700,
-  fontSize: '13px',
-  boxShadow: '0 0 18px rgba(34,197,94,0.16)',
-}
-
-const textareaStyle: React.CSSProperties = {
-  width: '100%',
-  minHeight: '90px',
-  marginTop: '16px',
-  padding: '14px 16px',
-  background: 'rgba(2, 6, 23, 0.85)',
-  color: '#f8fafc',
-  border: '1px solid rgba(34,197,94,0.14)',
-  borderRadius: '14px',
-  outline: 'none',
-  fontSize: '14px',
-  resize: 'vertical',
-}
-
-const tabsBar: React.CSSProperties = {
-  display: 'flex',
-  gap: '10px',
-  marginBottom: '24px',
-  flexWrap: 'wrap',
-}
-
-const tabButton: React.CSSProperties = {
-  border: '1px solid rgba(34,197,94,0.14)',
-  background: 'rgba(2, 6, 23, 0.65)',
-  color: '#94a3b8',
-  padding: '11px 16px',
-  borderRadius: '14px',
-  cursor: 'pointer',
-  fontWeight: 700,
-  fontSize: '14px',
-}
-
-const activeTabButton: React.CSSProperties = {
-  ...tabButton,
-  background: 'rgba(34,197,94,0.12)',
-  color: '#bbf7d0',
-  border: '1px solid rgba(34,197,94,0.26)',
-}
+const panelTitleStyle: React.CSSProperties = { margin: 0, fontSize: '18px', fontWeight: 700 }
+const panelSubtitleStyle: React.CSSProperties = { margin: '6px 0 0', color: color.textSecondary, fontSize: '14px' }
+const cardLabelStyle: React.CSSProperties = { margin: 0, color: color.greenSoft, fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 800 }
+const cardTextStyle: React.CSSProperties = { margin: '8px 0 0', color: color.textSecondary, fontSize: '14px', lineHeight: 1.5 }
