@@ -26,4 +26,6 @@ export {
   Trash2,
   Settings,
   PanelLeftClose,
+  Calendar,
+  Check,
 } from 'lucide-react'

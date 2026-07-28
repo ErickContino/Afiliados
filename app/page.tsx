@@ -17,7 +17,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import LayoutShell from './components/LayoutShell'
 import { color, radius } from '@/lib/design-tokens'
-import { Card, Field, Input, Select, StatCard, DataTable, Column, LoadingState, AccessBlockedState } from './components/ui'
+import { Card, Field, Select, StatCard, DataTable, Column, LoadingState, AccessBlockedState, DateRangeFilter } from './components/ui'
 import { Star } from './components/icons'
 
 type UserRole = 'admin_master' | 'admin_partner' | 'gerente' | 'afiliado'
@@ -446,14 +446,8 @@ export default function Home() {
           <h2 style={panelTitleStyle}>Filtros</h2>
           <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>Refine os dados exibidos.</p>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
-            <Field label="Data início">
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            </Field>
-
-            <Field label="Data fim">
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            </Field>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            <DateRangeFilter startDate={startDate} endDate={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end) }} />
 
             <Field label="Casa">
               <Select value={selectedHouse} onChange={(e) => setSelectedHouse(e.target.value)}>

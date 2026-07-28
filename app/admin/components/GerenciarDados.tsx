@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { color, radius, shadow } from '@/lib/design-tokens'
-import { Card, Field, Input, Select, Button, DataTable, Column, LoadingState, useToast, useConfirmDialog } from '../../components/ui'
+import { Card, Field, Input, Select, Button, DataTable, Column, LoadingState, useToast, useConfirmDialog, DateRangeFilter } from '../../components/ui'
 import { Upload } from '../../components/icons'
 
 type HouseRow = {
@@ -661,7 +661,7 @@ export default function GerenciarDados() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
           <Field label="Casa">
             <Select value={filterHouse} onChange={(e) => setFilterHouse(e.target.value)}>
               <option value="">Todas</option>
@@ -684,13 +684,7 @@ export default function GerenciarDados() {
             </Select>
           </Field>
 
-          <Field label="De">
-            <Input type="date" value={filterStart} onChange={(e) => setFilterStart(e.target.value)} />
-          </Field>
-
-          <Field label="Até">
-            <Input type="date" value={filterEnd} onChange={(e) => setFilterEnd(e.target.value)} />
-          </Field>
+          <DateRangeFilter startDate={filterStart} endDate={filterEnd} onChange={(start, end) => { setFilterStart(start); setFilterEnd(end) }} />
         </div>
       </Card>
 
