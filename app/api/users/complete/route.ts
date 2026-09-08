@@ -3,7 +3,7 @@ import { getRequester, supabaseAdmin } from '@/lib/api-auth'
 
 export async function POST(req: Request) {
   try {
-    const auth = await getRequester(req, ['admin_master'])
+    const auth = await getRequester(req, ['admin_master', 'gerente'])
     if (!auth.ok) return auth.response
     const { requester: currentUser } = auth
 
@@ -22,13 +22,42 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Dados inválidos' }, { status: 400 })
     }
 
+    let finalRole = role
+    let finalParentId = parent_id
+
+    if (currentUser.role === 'gerente') {
+      const { data: targetUser, error: targetError } = await supabaseAdmin
+        .from('users')
+        .select('id, status, parent_id')
+        .eq('id', user_id)
+        .single()
+
+      if (targetError || !targetUser) {
+        return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 })
+      }
+
+      const isOwnAffiliate = targetUser.parent_id === currentUser.id
+      const isClaimablePending = targetUser.status === 'pending'
+
+      if (!isOwnAffiliate && !isClaimablePending) {
+        return NextResponse.json(
+          { error: 'Você só pode aceitar cadastros pendentes ou editar afiliados da sua própria equipe.' },
+          { status: 403 }
+        )
+      }
+
+      // Gerente só pode aceitar/editar afiliados sob a própria hierarquia, nunca mudar role ou responsável.
+      finalRole = 'afiliado'
+      finalParentId = currentUser.id
+    }
+
     // 1. Atualizar usuário
     const { error: userError } = await supabaseAdmin
       .from('users')
       .update({
         nome,
-        role,
-        parent_id,
+        role: finalRole,
+        parent_id: finalParentId,
         afiliado_nome,
         status: 'active'
       })

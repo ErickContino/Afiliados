@@ -28,4 +28,6 @@ export {
   PanelLeftClose,
   Calendar,
   Check,
+  GraduationCap,
+  PlayCircle,
 } from 'lucide-react'

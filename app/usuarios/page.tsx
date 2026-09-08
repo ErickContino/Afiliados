@@ -306,8 +306,8 @@ export default function UsuariosPage() {
 
     if (!currentUser?.db) return
 
-    if (currentUser.db.role !== 'admin_master') {
-      toast.error('Apenas admin_master pode completar cadastro.')
+    if (currentUser.db.role !== 'admin_master' && currentUser.db.role !== 'gerente') {
+      toast.error('Apenas admin_master ou gerente podem completar cadastro.')
       return
     }
 
@@ -321,7 +321,11 @@ export default function UsuariosPage() {
       return
     }
 
-    const parentId = completeForm.role === 'afiliado' ? completeForm.parent_id || null : null
+    const parentId = isGerente
+      ? currentUser.db.id
+      : completeForm.role === 'afiliado'
+        ? completeForm.parent_id || null
+        : null
 
     if (completeForm.role === 'afiliado' && !parentId) {
       toast.error('Selecione um gerente responsável para o afiliado.')
@@ -497,8 +501,8 @@ export default function UsuariosPage() {
     setCompleteForm({
       user_id: user.id,
       nome: user.nome || user.email?.split('@')[0] || '',
-      role: user.role || 'afiliado',
-      parent_id: user.parent_id || '',
+      role: isGerente ? 'afiliado' : user.role || 'afiliado',
+      parent_id: isGerente ? currentUser?.db?.id || '' : user.parent_id || '',
       afiliado_nome: user.afiliado_nome || '',
     })
 
@@ -529,12 +533,19 @@ export default function UsuariosPage() {
   }
 
   const isAdminMaster = currentUser?.db?.role === 'admin_master'
-  const canViewPage = isAdminMaster
+  const isGerente = currentUser?.db?.role === 'gerente'
+  const canViewPage = isAdminMaster || isGerente
   const canCreateUser = isAdminMaster
 
   const pendingUsers = useMemo(() => users.filter((u) => u.status === 'pending'), [users])
-  const activeUsers = useMemo(() => users.filter((u) => u.status === 'active'), [users])
-  const inactiveUsers = useMemo(() => users.filter((u) => u.status === 'inactive'), [users])
+
+  const activeUsers = useMemo(() => {
+    const active = users.filter((u) => u.status === 'active')
+    if (isGerente) return active.filter((u) => u.parent_id === currentUser?.db?.id)
+    return active
+  }, [users, isGerente, currentUser?.db?.id])
+
+  const inactiveUsers = useMemo(() => (isAdminMaster ? users.filter((u) => u.status === 'inactive') : []), [users, isAdminMaster])
   const managerOptions = useMemo(() => users.filter((u) => u.role === 'gerente' && u.status === 'active'), [users])
 
   const assignUserOptions = useMemo(() => {
@@ -628,7 +639,7 @@ export default function UsuariosPage() {
   if (!canViewPage) {
     return (
       <LayoutShell active="usuarios" user={{ nome: currentUser.db.nome || '', email: currentUser.email || '', role: currentUser.db.role || '' }}>
-        <AccessBlockedState kind="restricted" description="Esta tela está disponível apenas para admin master." />
+        <AccessBlockedState kind="restricted" description="Esta tela está disponível apenas para admin master e gerente." />
       </LayoutShell>
     )
   }
@@ -743,18 +754,20 @@ export default function UsuariosPage() {
               <DataTable columns={pendingColumns} data={pendingUsers} rowKey={(u) => u.id} emptyMessage="Nenhum cadastro pendente." />
             </Card>
 
-            <Card>
-              <h2 style={panelTitleStyle}>Afiliados detectados no CSV sem usuário</h2>
-              <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>
-                Nomes encontrados em conversions.afiliado sem match em users.afiliado_nome.
-              </p>
-              <DataTable
-                columns={unregisteredColumns}
-                data={unregisteredAffiliates}
-                rowKey={(a) => a.afiliado}
-                emptyMessage="Nenhum afiliado sem usuário encontrado."
-              />
-            </Card>
+            {isAdminMaster && (
+              <Card>
+                <h2 style={panelTitleStyle}>Afiliados detectados no CSV sem usuário</h2>
+                <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>
+                  Nomes encontrados em conversions.afiliado sem match em users.afiliado_nome.
+                </p>
+                <DataTable
+                  columns={unregisteredColumns}
+                  data={unregisteredAffiliates}
+                  rowKey={(a) => a.afiliado}
+                  emptyMessage="Nenhum afiliado sem usuário encontrado."
+                />
+              </Card>
+            )}
 
             <Card>
               <h2 style={panelTitleStyle}>Filtros</h2>
@@ -793,7 +806,7 @@ export default function UsuariosPage() {
             </Card>
 
             <Card>
-              <h2 style={panelTitleStyle}>Usuários ativos</h2>
+              <h2 style={panelTitleStyle}>{isGerente ? 'Minha equipe' : 'Usuários ativos'}</h2>
               <p style={{ ...panelSubtitleStyle, marginBottom: '18px' }}>{filteredActiveUsers.length} registro(s) encontrado(s)</p>
               <DataTable columns={activeColumns} data={filteredActiveUsers} rowKey={(u) => u.id} emptyMessage="Nenhum usuário ativo encontrado." />
             </Card>
@@ -889,31 +902,39 @@ export default function UsuariosPage() {
                   />
                 </Field>
 
-                <Field label="Role">
-                  <Select
-                    value={completeForm.role}
-                    onChange={(e) => {
-                      const nextRole = e.target.value as UserRole
-                      setCompleteForm((prev) => ({ ...prev, role: nextRole, parent_id: nextRole === 'afiliado' ? prev.parent_id : '' }))
-                    }}
-                  >
-                    <option value="afiliado">Afiliado</option>
-                    <option value="gerente">Gerente</option>
-                    <option value="admin_partner">Admin partner</option>
-                  </Select>
-                </Field>
+                {isGerente ? (
+                  <Callout variant="info">
+                    Como gerente, você só pode aceitar/editar afiliados sob sua própria responsabilidade. Papel: Afiliado — Gerente responsável: você.
+                  </Callout>
+                ) : (
+                  <>
+                    <Field label="Role">
+                      <Select
+                        value={completeForm.role}
+                        onChange={(e) => {
+                          const nextRole = e.target.value as UserRole
+                          setCompleteForm((prev) => ({ ...prev, role: nextRole, parent_id: nextRole === 'afiliado' ? prev.parent_id : '' }))
+                        }}
+                      >
+                        <option value="afiliado">Afiliado</option>
+                        <option value="gerente">Gerente</option>
+                        <option value="admin_partner">Admin partner</option>
+                      </Select>
+                    </Field>
 
-                {completeForm.role === 'afiliado' && (
-                  <Field label="Gerente responsável">
-                    <Select value={completeForm.parent_id} onChange={(e) => setCompleteForm((prev) => ({ ...prev, parent_id: e.target.value }))}>
-                      <option value="">Selecione</option>
-                      {managerOptions.map((manager) => (
-                        <option key={manager.id} value={manager.id}>
-                          {manager.nome}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
+                    {completeForm.role === 'afiliado' && (
+                      <Field label="Gerente responsável">
+                        <Select value={completeForm.parent_id} onChange={(e) => setCompleteForm((prev) => ({ ...prev, parent_id: e.target.value }))}>
+                          <option value="">Selecione</option>
+                          {managerOptions.map((manager) => (
+                            <option key={manager.id} value={manager.id}>
+                              {manager.nome}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    )}
+                  </>
                 )}
 
                 <section

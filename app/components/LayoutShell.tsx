@@ -15,6 +15,7 @@ import {
   LogOut,
   MessageCircle,
   Settings,
+  GraduationCap,
 } from './icons'
 
 const SUPPORT_WHATSAPP_NUMBER = '5511965990451'
@@ -25,7 +26,7 @@ type LayoutUser = {
   role?: string
 }
 
-type ActivePage = 'dashboard' | 'comissoes' | 'usuarios' | 'casas' | 'perfil' | 'financeiro' | 'admin'
+type ActivePage = 'dashboard' | 'comissoes' | 'usuarios' | 'casas' | 'perfil' | 'financeiro' | 'admin' | 'treinamento'
 
 export default function LayoutShell({
   children,
@@ -42,6 +43,7 @@ export default function LayoutShell({
   const isAdminMaster = user?.role === 'admin_master'
   const isGerente = user?.role === 'gerente'
   const canSeeComissoes = isAdminMaster || isGerente
+  const canSeeUsuarios = isAdminMaster || isGerente
 
   useEffect(() => {
     const saved = window.localStorage.getItem('sidebar_collapsed')
@@ -139,12 +141,13 @@ export default function LayoutShell({
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '22px' }}>
             <SidebarItem icon={<LayoutDashboard size={18} />} label="Dashboard" href="/" active={active === 'dashboard'} collapsed={collapsed} />
             <SidebarItem icon={<Wallet size={18} />} label="Financeiro" href="/financeiro" active={active === 'financeiro'} collapsed={collapsed} />
+            <SidebarItem icon={<GraduationCap size={18} />} label="Treinamento" href="/treinamento" active={active === 'treinamento'} collapsed={collapsed} />
 
             {canSeeComissoes && (
               <SidebarItem icon={<Percent size={18} />} label="Comissões" href="/comissoes" active={active === 'comissoes'} collapsed={collapsed} />
             )}
 
-            {isAdminMaster && (
+            {canSeeUsuarios && (
               <SidebarItem icon={<Users size={18} />} label="Usuários" href="/usuarios" active={active === 'usuarios'} collapsed={collapsed} />
             )}
 
